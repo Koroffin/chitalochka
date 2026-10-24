@@ -108,7 +108,8 @@ class ReaderPageTest(unittest.TestCase):
     def test_slider_changes_store_wpm(self):
         self.page.wpm_slider.setValue(400)
         self.assertEqual(self.store.wpm, 400)
-        expected = round(delay_for(self.page.model.current, 400) * 1000)
+        m = self.page.model
+        expected = round(delay_for(m.current, 400, m.weights(400)[m.pos]) * 1000)
         self.assertEqual(self.page.current_delay_ms(), expected)
 
     def test_click_on_word_moves_position(self):
@@ -189,7 +190,8 @@ class ReaderPageTest(unittest.TestCase):
         page.load(KEY, self.book)
         self.assertEqual(page.wpm_slider.value(), 1000)
         self.assertEqual(page.wpm_label.text(), "1000 сл/мин")
-        expected = round(delay_for(page.model.current, 1000) * 1000)
+        m = page.model
+        expected = round(delay_for(m.current, 1000, m.weights(1000)[m.pos]) * 1000)
         self.assertEqual(page.current_delay_ms(), expected)
 
     def failing_save(self):

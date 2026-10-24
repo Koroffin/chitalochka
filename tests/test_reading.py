@@ -6,7 +6,9 @@ from speedreader.reading import (
     delay_for,
     ends_clause,
     ends_sentence,
+    length_weights,
     split_words,
+    word_length,
 )
 
 
@@ -62,6 +64,28 @@ class SplitAndTimingTests(unittest.TestCase):
         for t in ["слово,", "слово;", "слово:", "слово—", "слово-", "слово–"]:
             self.assertTrue(ends_clause(t), t)
         self.assertFalse(ends_clause("слово"))
+
+    def test_word_length_counts_letters_and_digits_only(self):
+        self.assertEqual(word_length("в доме,"), 5)
+        self.assertEqual(word_length("«1984»."), 4)
+
+    def test_length_weights_proportional_to_chunk_average(self):
+        self.assertEqual(length_weights([2, 4, 6], chunk=3), [0.5, 1.0, 1.5])
+
+    def test_length_weights_clamped_then_renormalized(self):
+        w = length_weights([1, 10, 10], chunk=3)
+        self.assertAlmostEqual(sum(w), 3.0)
+        self.assertAlmostEqual(w[0], 0.5 * 3 / (0.5 + 2 * 10 / 7))
+        w = length_weights([1, 1, 1, 1, 1, 50], chunk=6)
+        self.assertAlmostEqual(sum(w), 6.0)
+        self.assertAlmostEqual(w[5], 3.0 * 6 / 5.5)
+
+    def test_length_weights_chunks_independently(self):
+        w = length_weights([1, 3, 10, 10, 7], chunk=2)
+        self.assertEqual(w[:2], [0.5, 1.5])
+        self.assertEqual(w[2:4], [1.0, 1.0])
+        self.assertEqual(w[4:], [1.0])
+        self.assertEqual(length_weights([], chunk=5), [])
 
     def test_delay_uses_max_multiplier_not_product(self):
         w = Word(0, 0, 0, 5, "конец.", last_in_block=True)
@@ -130,9 +154,18 @@ class ReadingModelTests(unittest.TestCase):
         self.m.pos = 3
         self.assertEqual(self.m.progress, 0.5)
 
-    def test_delay_uses_current_word(self):
+    def test_delay_uses_current_word_and_length_weight(self):
+        # lengths 3,3,3,6,4,5 → average 4 → "два." weighs 0.75, then ×2 for the period
         self.m.pos = 1
-        self.assertAlmostEqual(self.m.delay(300), 0.4)
+        self.assertAlmostEqual(self.m.delay(300), 0.2 * 0.75 * 2)
+        self.m.pos = 3
+        self.assertAlmostEqual(self.m.delay(300), 0.2 * 1.5 * 2.5)
+
+    def test_chunk_size_equals_wpm(self):
+        m = ReadingModel({"blocks": [{"type": "paragraph", "text": "Я иду в парк с другом"}]})
+        self.assertEqual(m.weights(2)[:2], [0.5, 1.5])
+        self.assertAlmostEqual(m.delay(2), 30 * 0.5)
+        self.assertAlmostEqual(sum(m.weights(300)), 4.0)
 
     def test_empty_book(self):
         m = ReadingModel({"blocks": []})

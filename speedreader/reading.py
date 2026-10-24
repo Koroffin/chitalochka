@@ -70,7 +70,32 @@ def ends_clause(text: str) -> bool:
     return _last_char(text) in _CLAUSE_END and _last_char(text) != ""
 
 
-def delay_for(word: Word, wpm: int) -> float:
+MIN_WEIGHT = 0.5
+MAX_WEIGHT = 3.0
+
+
+def word_length(text: str) -> int:
+    return sum(1 for c in text if c.isalnum())
+
+
+def length_weights(lengths: list[int], chunk: int) -> list[float]:
+    """Per-word time weights: length over the chunk average, clamped, then
+    rescaled so every chunk still averages 1.0."""
+    chunk = max(1, chunk)
+    out: list[float] = []
+    for i in range(0, len(lengths), chunk):
+        part = lengths[i:i + chunk]
+        avg = sum(part) / len(part)
+        if avg <= 0:
+            out.extend(1.0 for _ in part)
+            continue
+        raw = [min(MAX_WEIGHT, max(MIN_WEIGHT, n / avg)) for n in part]
+        scale = len(raw) / sum(raw)
+        out.extend(w * scale for w in raw)
+    return out
+
+
+def delay_for(word: Word, wpm: int, weight: float = 1.0) -> float:
     multiplier = 1.0
     if ends_clause(word.text):
         multiplier = max(multiplier, 1.5)
@@ -78,7 +103,7 @@ def delay_for(word: Word, wpm: int) -> float:
         multiplier = max(multiplier, 2.0)
     if word.last_in_block:
         multiplier = max(multiplier, 2.5)
-    return 60 / wpm * multiplier
+    return 60 / wpm * weight * multiplier
 
 
 class ReadingModel:
@@ -98,6 +123,9 @@ class ReadingModel:
                 )
         self.word_count = len(self.words)
         self.pos = 0
+        self._lengths = [word_length(w.text) for w in self.words]
+        self._weights_wpm = 0
+        self._weights: list[float] = []
 
     @property
     def current(self) -> Word | None:
@@ -131,9 +159,17 @@ class ReadingModel:
         self.pos += 1
         return True
 
+    def weights(self, wpm: int) -> list[float]:
+        if wpm != self._weights_wpm:
+            self._weights = length_weights(self._lengths, wpm)
+            self._weights_wpm = wpm
+        return self._weights
+
     def delay(self, wpm: int) -> float:
         word = self.current
-        return delay_for(word, wpm) if word else 60 / wpm
+        if not word:
+            return 60 / wpm
+        return delay_for(word, wpm, self.weights(wpm)[self.pos])
 
     def is_sentence_start(self, i: int) -> bool:
         return (
