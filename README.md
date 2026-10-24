@@ -4,7 +4,7 @@ Desktop reader with a running word highlight for loveread.ec books.
 
 ## Установка
 
-Скачайте файл со страницы релизов: https://github.com/<owner>/<repo>/releases
+Скачайте файл со страницы релизов: https://github.com/Koroffin/chitalochka/releases
 
 - Ubuntu: `sudo apt install ./speedreader_*.deb`, затем `speedreader` или ярлык в меню.
 - Windows: `SpeedReader.exe` запускается напрямую, установка не нужна. Exe не
