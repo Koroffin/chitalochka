@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 
 from speedreader.library import LibraryStore
 from speedreader.sources import SourceError, book_key
+from speedreader.ui import add_page
 from speedreader.ui.add_page import AddPage
 
 URL = "https://fake.test/book/1"
@@ -40,9 +41,10 @@ def make_book(book_id=1):
 class FakeSource:
     name = "fake.test"
 
-    def __init__(self, error=None, wait_for_stop=False):
+    def __init__(self, error=None, wait_for_stop=False, stubborn=False):
         self.error = error
         self.wait_for_stop = wait_for_stop
+        self.stubborn = stubborn
         self.calls = 0
 
     def matches(self, url):
@@ -53,6 +55,10 @@ class FakeSource:
 
     def download(self, url, log, should_stop):
         self.calls += 1
+        if self.stubborn:
+            for _ in range(50):
+                time.sleep(0.02)
+            raise SourceError("Отменено")
         if self.wait_for_stop:
             deadline = time.monotonic() + 5
             while not should_stop() and time.monotonic() < deadline:
@@ -163,6 +169,23 @@ class AddPageTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not self.page.busy))
         self.assertTrue(self.page.download_button.isEnabled())
         self.assertTrue(self.page.cancel_button.isHidden())
+
+    def test_shutdown_returns_true_when_worker_stops(self):
+        self.assertTrue(self.page.shutdown())
+        self.use(FakeSource(wait_for_stop=True))
+        self.page.start_download()
+        self.assertTrue(self.page.shutdown())
+        self.assertFalse(self.page.busy)
+
+    def test_shutdown_timeout_parks_running_worker(self):
+        self.use(FakeSource(stubborn=True))
+        self.page.start_download()
+        worker = self.page._worker
+        self.assertFalse(self.page.shutdown(100))
+        self.assertFalse(self.page.busy)
+        self.assertIn(worker, add_page._orphaned_workers)
+        self.assertTrue(wait_until(lambda: worker not in add_page._orphaned_workers))
+        self.assertTrue(worker.isFinished())
 
     def test_pdf_button_disabled(self):
         self.assertFalse(self.page.pdf_button.isEnabled())

@@ -17,6 +17,8 @@ from speedreader.sources import SOURCES, SourceError, book_key, import_book_json
 
 _PAGE_RE = re.compile(r"page (\d+)/(\d+)")
 _CANCEL_TEXT = "Отмена"
+# A QThread destroyed while running aborts the process; keep timed-out workers alive here.
+_orphaned_workers: set = set()
 
 
 class DownloadWorker(QThread):
@@ -190,14 +192,23 @@ class AddPage(QWidget):
         self.cancel_button.setText("Отмена…")
         self.cancel_button.setEnabled(False)
 
-    def shutdown(self, timeout_ms: int = 3000) -> None:
-        if self._worker is None:
-            return
+    def shutdown(self, timeout_ms: int = 3000) -> bool:
+        worker = self._worker
+        if worker is None:
+            return True
         self._generation += 1
-        self._worker.cancel()
-        if self._worker.wait(timeout_ms):
-            self._worker = None
-            self._set_busy(False)
+        worker.cancel()
+        stopped = worker.wait(timeout_ms)
+        if not stopped:
+            _orphaned_workers.add(worker)
+            worker.finished.connect(
+                lambda: _orphaned_workers.discard(worker), Qt.QueuedConnection
+            )
+            if worker.isFinished():
+                _orphaned_workers.discard(worker)
+        self._worker = None
+        self._set_busy(False)
+        return stopped
 
     def _choose_json(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Импорт JSON", "", "JSON (*.json)")
