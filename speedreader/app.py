@@ -71,11 +71,11 @@ class MainWindow(QMainWindow):
     def open_book(self, key: str, restart: bool) -> None:
         try:
             book = self.store.load_book(key)
+            self.reader_page.load(key, book, restart)
         except LibraryError as e:
             self._show_error(str(e))
             self.show_library()
             return
-        self.reader_page.load(key, book, restart)
         self.stack.setCurrentWidget(self.reader_page)
         self.reader_page.setFocus()
 
@@ -116,7 +116,6 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("SpeedReader")
-    app.setOrganizationName("SpeedReader")
     data_dir = args.data_dir or default_data_dir()
     try:
         store = LibraryStore(data_dir)

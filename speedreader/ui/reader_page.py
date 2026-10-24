@@ -113,7 +113,8 @@ class ReaderPage(QWidget):
         return self._timer.isActive()
 
     def load(self, key: str, book: dict, restart: bool = False) -> None:
-        self.pause()
+        # The previous book is saved on hide; saving here would undo a restart's reset.
+        self.pause(save=False)
         self.key = key
         self.book = book
         self.model = ReadingModel(book)
@@ -197,10 +198,11 @@ class ReaderPage(QWidget):
         self.refresh()
         self._center_cursor()
 
-    def pause(self) -> None:
+    def pause(self, save: bool = True) -> None:
         self._timer.stop()
         self.refresh()
-        self.save_position()
+        if save:
+            self.save_position()
 
     def toggle(self) -> None:
         if self.playing:

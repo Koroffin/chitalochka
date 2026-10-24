@@ -66,13 +66,13 @@ class LibraryPage(QWidget):
             return f"{prefix} — файл книги не найден", False
         try:
             book = self.store.load_book(entry["key"])
-        except LibraryError:
+            percent = 0
+            if entry["word_count"] > 0:
+                pos = entry["position"]
+                flat = ReadingModel(book).flat_index(pos["block"], pos["word"])
+                percent = round(100 * flat / entry["word_count"])
+        except (LibraryError, KeyError, TypeError, AttributeError, ValueError):
             return f"{prefix} — файл книги не найден", False
-        percent = 0
-        if entry["word_count"] > 0:
-            pos = entry["position"]
-            flat = ReadingModel(book).flat_index(pos["block"], pos["word"])
-            percent = round(100 * flat / entry["word_count"])
         return f"{prefix} — {percent} %", True
 
     def refresh(self) -> None:

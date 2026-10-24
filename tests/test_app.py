@@ -11,7 +11,7 @@ from unittest import mock
 from PySide6.QtCore import qInstallMessageHandler
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from speedreader.app import MainWindow, main
+from speedreader.app import MainWindow, default_data_dir, main
 from speedreader.library import LibraryError, LibraryStore
 from speedreader.ui.library_page import LibraryPage
 
@@ -123,6 +123,17 @@ class LibraryPageTest(StoreCase):
         self.assertIsNone(self.store.find("k"))
         self.assertEqual(self.page.list.count(), 1)
 
+    def test_malformed_book_file_marked_unavailable(self):
+        (self.data_dir / "books" / "k.json").write_text("[]", encoding="utf-8")
+        page = LibraryPage(self.store)
+        self.addCleanup(page.deleteLater)
+        self.page = page
+        self.assertEqual(page.list.count(), 2)
+        self.select("Первая")
+        self.assertIn("не найден", self.row_text("Первая"))
+        self.assertFalse(page.continue_button.isEnabled())
+        self.assertTrue(page.redownload_button.isEnabled())
+
 
 class MainWindowTest(StoreCase):
     def setUp(self):
@@ -161,7 +172,36 @@ class MainWindowTest(StoreCase):
         self.assertIs(w.stack.currentWidget(), w.library_page)
 
 
+    def test_open_book_store_error_goes_to_status_bar(self):
+        w = self.window
+        w.open_book("k", False)
+        w.reader_page.back_requested.emit()
+        with mock.patch.object(w.reader_page, "load", side_effect=LibraryError("диск")):
+            w.open_book("k2", False)
+        self.assertIn("диск", w.statusBar().currentMessage())
+        self.assertIs(w.stack.currentWidget(), w.library_page)
+
+    def test_restart_of_loaded_book_keeps_reset(self):
+        w = self.window
+        w.open_book("k", False)
+        w.reader_page.model.set_position(1, 1)
+        w.reader_page.save_position()
+        w.reader_page.back_requested.emit()
+        for i in range(w.library_page.list.count()):
+            if "Первая" in w.library_page.list.item(i).text():
+                w.library_page.list.setCurrentRow(i)
+        w.library_page.restart_button.click()
+        self.assertEqual(self.store.find("k")["position"], {"block": 0, "word": 0})
+        self.assertEqual(w.reader_page.model.position, (0, 0))
+
+
 class MainTest(unittest.TestCase):
+    def test_default_data_dir_has_single_app_component(self):
+        main(["--smoke", "--data-dir", tempfile.gettempdir()])
+        path = default_data_dir()
+        self.assertEqual(path.name, "SpeedReader")
+        self.assertNotEqual(path.parent.name, "SpeedReader")
+
     def test_main_smoke_returns_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(main(["--smoke", "--data-dir", tmp]), 0)
