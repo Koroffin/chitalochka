@@ -5,7 +5,7 @@ import tempfile
 import unittest
 import urllib.error
 
-import loveread
+from speedreader.sources import loveread
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 

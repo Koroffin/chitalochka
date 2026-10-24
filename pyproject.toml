@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "speedreader"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = ["PySide6-Essentials>=6.7"]
+
+[project.scripts]
+speedreader = "speedreader.app:main"
+
+[tool.setuptools.packages.find]
+include = ["speedreader*"]
