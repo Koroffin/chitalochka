@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from PySide6.QtCore import qInstallMessageHandler
+from PySide6.QtCore import Qt, qInstallMessageHandler
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from speedreader.app import MainWindow, default_data_dir, main
@@ -171,6 +172,14 @@ class MainWindowTest(StoreCase):
         self.assertIn("диск", w.statusBar().currentMessage())
         self.assertIs(w.stack.currentWidget(), w.library_page)
 
+    def test_reader_store_error_goes_to_status_bar(self):
+        w = self.window
+        w.open_book("k", False)
+        with mock.patch.object(self.store, "save", side_effect=LibraryError("диск")):
+            QTest.keyClick(w.reader_page, Qt.Key_Space)
+            QTest.keyClick(w.reader_page, Qt.Key_Space)
+        self.assertFalse(w.reader_page.playing)
+        self.assertEqual(w.statusBar().currentMessage(), "Ошибка хранилища: диск")
 
     def test_open_book_store_error_goes_to_status_bar(self):
         w = self.window

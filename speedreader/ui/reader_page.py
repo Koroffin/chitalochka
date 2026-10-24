@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from speedreader.library import LibraryStore
+from speedreader.library import LibraryError, LibraryStore
 from speedreader.reading import ReadingModel
 
 _HIGHLIGHT = QColor("#ffe58a")
@@ -36,6 +36,7 @@ def _utf16_len(text: str) -> int:
 
 class ReaderPage(QWidget):
     back_requested = Signal()
+    store_error = Signal(str)
 
     def __init__(self, store: LibraryStore, parent: QWidget | None = None):
         super().__init__(parent)
@@ -217,9 +218,16 @@ class ReaderPage(QWidget):
         self._timer.start(self.current_delay_ms())
         self.refresh()
 
+    def _write(self, method, *args):
+        try:
+            return method(*args)
+        except LibraryError as e:
+            self.store_error.emit(str(e))
+            return None
+
     def save_position(self) -> None:
         if self.store.find(self.key) is not None and self.model.current is not None:
-            self.store.set_position(self.key, *self.model.position)
+            self._write(self.store.set_position, self.key, *self.model.position)
 
     def _moved(self) -> None:
         self.refresh()
@@ -242,7 +250,7 @@ class ReaderPage(QWidget):
             return
         text = self.book["blocks"][word.block]["text"]
         label = text[word.start:word.start + _LABEL_LEN]
-        if self.store.add_bookmark(self.key, *word.position, label):
+        if self._write(self.store.add_bookmark, self.key, *word.position, label):
             self._fill_bookmarks()
 
     def _fill_bookmarks(self) -> None:
@@ -262,13 +270,13 @@ class ReaderPage(QWidget):
         menu = QMenu(self)
         remove = menu.addAction("Удалить")
         if menu.exec(self.bookmarks_box.mapToGlobal(point)) is remove:
-            self.store.remove_bookmark(self.key, index)
+            self._write(self.store.remove_bookmark, self.key, index)
             self._fill_bookmarks()
 
     def _on_wpm_changed(self, value: int, persist: bool = True) -> None:
         self.wpm_label.setText(f"{value} сл/мин")
         if persist:
-            self.store.wpm = value
+            self._write(setattr, self.store, "wpm", value)
 
     def _handle_key(self, event) -> bool:
         key = event.key()

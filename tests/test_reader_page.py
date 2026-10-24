@@ -6,13 +6,14 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from speedreader.library import LibraryStore
+from speedreader.library import LibraryError, LibraryStore
 from speedreader.reading import delay_for
 from speedreader.ui.reader_page import ReaderPage
 
@@ -165,6 +166,32 @@ class ReaderPageTest(unittest.TestCase):
         elapsed = time.perf_counter() - started
         self.assertEqual(self.page.model.word_count, 60000)
         self.assertLess(elapsed, 2.0)
+
+    def failing_save(self):
+        errors = []
+        self.page.store_error.connect(errors.append)
+        patcher = mock.patch.object(
+            self.store, "save", side_effect=LibraryError("диск полон")
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return errors
+
+    def test_pause_store_error_is_reported(self):
+        errors = self.failing_save()
+        QTest.keyClick(self.page, Qt.Key_Space)
+        self.assertTrue(self.page.playing)
+        QTest.keyClick(self.page, Qt.Key_Space)
+        self.assertFalse(self.page.playing)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("диск полон", errors[0])
+
+    def test_slider_store_error_is_reported(self):
+        errors = self.failing_save()
+        self.page.wpm_slider.setValue(400)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("диск полон", errors[0])
+        self.assertEqual(self.store.wpm, 400)
 
 
 if __name__ == "__main__":

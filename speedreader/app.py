@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         self.library_page.add_requested.connect(self._show_add)
         self.library_page.redownload_requested.connect(self._redownload)
         self.library_page.store_error.connect(self._show_error)
+        self.reader_page.store_error.connect(self._show_error)
         self.reader_page.back_requested.connect(self._back_from_reader)
         self.add_page.book_ready.connect(lambda key: self.open_book(key, False))
         self.add_page.back_requested.connect(self.show_library)
@@ -61,11 +62,7 @@ class MainWindow(QMainWindow):
 
     def show_library(self) -> None:
         self.library_page.refresh()
-        try:
-            # Hiding the reader saves its position.
-            self.stack.setCurrentWidget(self.library_page)
-        except LibraryError as e:
-            self._show_error(str(e))
+        self.stack.setCurrentWidget(self.library_page)
         self.library_page.list.setFocus()
 
     def open_book(self, key: str, restart: bool) -> None:
@@ -79,14 +76,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.reader_page)
         self.reader_page.setFocus()
 
-    def _save_position(self) -> None:
-        try:
-            self.reader_page.save_position()
-        except LibraryError as e:
-            self._show_error(str(e))
-
     def _back_from_reader(self) -> None:
-        self._save_position()
+        self.reader_page.save_position()
         self.show_library()
 
     def _show_add(self) -> None:
@@ -103,7 +94,7 @@ class MainWindow(QMainWindow):
         self.add_page.start_download(force=True)
 
     def closeEvent(self, event) -> None:
-        self._save_position()
+        self.reader_page.save_position()
         self.add_page.shutdown()
         event.accept()
 
