@@ -107,6 +107,17 @@ class LibraryPageTest(StoreCase):
         self.assertTrue(self.page.redownload_button.isEnabled())
         self.assertIn("не найден", self.row_text("Первая"))
 
+    def test_redownload_disabled_without_known_source(self):
+        book = make_book(3, "Импорт")
+        book["source"] = ""
+        self.store.add_book("import-3", book)
+        self.page.refresh()
+        self.select("Импорт")
+        self.assertFalse(self.page.redownload_button.isEnabled())
+        self.assertTrue(self.page.continue_button.isEnabled())
+        self.select("Первая")
+        self.assertTrue(self.page.redownload_button.isEnabled())
+
     def test_delete_asks_and_removes(self):
         self.select("Первая")
         with mock.patch(

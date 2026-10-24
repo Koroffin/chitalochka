@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from speedreader.library import LibraryError, LibraryStore
+from speedreader.sources import detect
 
 _KEY_ROLE = Qt.UserRole
 _AVAILABLE_ROLE = Qt.UserRole + 1
@@ -94,7 +95,10 @@ class LibraryPage(QWidget):
         available = has_item and bool(item.data(_AVAILABLE_ROLE))
         self.continue_button.setEnabled(available)
         self.restart_button.setEnabled(available)
-        self.redownload_button.setEnabled(has_item)
+        entry = self.store.find(item.data(_KEY_ROLE)) if has_item else None
+        self.redownload_button.setEnabled(
+            entry is not None and detect(entry["source_url"]) is not None
+        )
         self.delete_button.setEnabled(has_item)
 
     def _continue(self) -> None:
