@@ -33,6 +33,25 @@ class SplitAndTimingTests(unittest.TestCase):
     def test_only_punctuation_block_has_no_words(self):
         self.assertEqual(spans("* * *"), [])
 
+    def test_preposition_glued_to_next_word(self):
+        self.assertEqual(spans("Он шёл в дом, без шапки."), ["Он", "шёл", "в дом,", "без шапки."])
+        self.assertEqual(spans("(В доме) тихо, У окна."), ["(В доме)", "тихо,", "У окна."])
+
+    def test_preposition_at_block_end_stays_alone(self):
+        self.assertEqual(spans("Он вошёл в"), ["Он", "вошёл", "в"])
+
+    def test_preposition_with_trailing_punctuation_not_glued(self):
+        self.assertEqual(spans("К. Иванов и с, запятой"), ["К.", "Иванов", "и", "с,", "запятой"])
+
+    def test_preposition_chain_forms_one_group(self):
+        self.assertEqual(spans("Кот из под стола"), ["Кот", "из под стола"])
+
+    def test_model_counts_glued_group_as_one_word(self):
+        m = ReadingModel({"blocks": [{"type": "paragraph", "text": "Я иду в парк с другом"}]})
+        self.assertEqual(m.word_count, 4)
+        self.assertEqual(m.words[2].text, "в парк")
+        self.assertTrue(m.words[3].last_in_block)
+
     def test_ends_sentence_handles_closing_quotes(self):
         for t in ["конец.", "конец?»", "конец!)", "конец…", "т.е."]:
             self.assertTrue(ends_sentence(t), t)

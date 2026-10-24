@@ -4,6 +4,9 @@ from dataclasses import dataclass
 _CLOSERS = "»\"'”’)]"
 _SENTENCE_END = ".!?…"
 _CLAUSE_END = ",;:-–—"
+PREPOSITIONS = frozenset(
+    "в без до из к на по о от перед при через с у за над об под про для".split()
+)
 
 
 @dataclass(frozen=True)
@@ -32,7 +35,26 @@ def split_words(text: str) -> list[tuple[int, int]]:
             spans[-1] = (spans[-1][0], m.end())
         elif pending_start is None:
             pending_start = m.start()
-    return spans
+    return _glue_prepositions(text, spans)
+
+
+def _is_bare_preposition(token: str) -> bool:
+    if not token or not token[-1].isalnum():
+        return False
+    return re.sub(r"[\W_]", "", token).lower() in PREPOSITIONS
+
+
+def _glue_prepositions(text: str, spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    i = 0
+    while i < len(spans):
+        start, end = spans[i]
+        while i + 1 < len(spans) and _is_bare_preposition(text[spans[i][0]:spans[i][1]]):
+            i += 1
+            end = spans[i][1]
+        out.append((start, end))
+        i += 1
+    return out
 
 
 def _last_char(text: str) -> str:
