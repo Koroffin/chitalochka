@@ -147,7 +147,7 @@ class ReaderPage(QWidget):
         # One edit block: otherwise a visible widget relayouts after every insert.
         cursor.beginEditBlock()
         for b, block in enumerate(self.book.get("blocks", [])):
-            is_heading = block["type"] == "heading"
+            is_heading = block.get("type") == "heading"
             block_format = flat if is_heading else indented
             if b == 0:
                 cursor.setBlockFormat(block_format)

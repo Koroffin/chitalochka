@@ -152,6 +152,13 @@ class ReaderPageTest(unittest.TestCase):
             selections = self.page.text.extraSelections()
             self.assertEqual(selections[0].cursor.selectedText(), word.text)
 
+    def test_block_without_type_loads(self):
+        book = make_book([{"text": "Раз два."}, {"type": "heading", "text": "Три"}])
+        self.store.add_book("notype", book)
+        self.page.load("notype", book)
+        self.assertEqual(self.page.model.word_count, 3)
+        self.assertEqual(len(self.page.word_offsets), 3)
+
     def test_load_after_previous_book_removed(self):
         self.store.add_book("other", self.book)
         self.store.remove(KEY)
