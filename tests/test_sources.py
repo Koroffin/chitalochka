@@ -90,6 +90,15 @@ class ImportTest(unittest.TestCase):
         self.assertRegex(empty, r"^import-[0-9a-f]{12}$")
         self.assertEqual(empty, book_key({"id": "", "title": "T"}))
 
+    def test_import_requires_string_title_and_drops_non_string_author(self):
+        for title in (123, None, ["Т"], ""):
+            book = {"id": 1, "title": title, "blocks": []}
+            with self.subTest(title=title), self.assertRaises(SourceError):
+                import_book_json(self.write(json.dumps(book)))
+        book = {"id": 1, "title": "Т", "author": 5, "source": ["x"], "blocks": []}
+        data = import_book_json(self.write(json.dumps(book)))
+        self.assertEqual((data["author"], data["source"]), ("", ""))
+
     def test_import_rejects_id_of_wrong_type(self):
         for book_id in ([1], {"a": 1}, None, True):
             book = {"id": book_id, "title": "Т", "blocks": []}

@@ -82,7 +82,7 @@ def import_book_json(path):
             data = json.load(f)
     except (OSError, ValueError) as e:
         raise SourceError(f"Не удалось прочитать файл: {e}") from e
-    if not isinstance(data, dict) or "title" not in data:
+    if not isinstance(data, dict) or not isinstance(data.get("title"), str) or not data["title"]:
         raise not_a_book
     if isinstance(data.get("id"), bool) or not isinstance(data.get("id"), (int, str)):
         raise not_a_book
@@ -91,7 +91,8 @@ def import_book_json(path):
         isinstance(b, dict) and isinstance(b.get("text"), str) for b in blocks
     ):
         raise not_a_book
-    data.setdefault("author", "")
-    data.setdefault("source", "")
+    for field in ("author", "source"):
+        if not isinstance(data.get(field), str):
+            data[field] = ""
     data.setdefault("complete", True)
     return data
