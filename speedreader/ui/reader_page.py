@@ -29,6 +29,11 @@ _HIGHLIGHT = QColor("#ffe58a")
 _LABEL_LEN = 40
 
 
+def _utf16_len(text: str) -> int:
+    # Qt document positions count UTF-16 units; emoji take two.
+    return len(text.encode("utf-16-le")) // 2
+
+
 class ReaderPage(QWidget):
     back_requested = Signal()
 
@@ -147,9 +152,10 @@ class ReaderPage(QWidget):
             else:
                 cursor.insertBlock(block_format)
             block_start = cursor.position()
-            cursor.insertText(block["text"], heading if is_heading else plain)
+            text = block["text"]
+            cursor.insertText(text, heading if is_heading else plain)
             while i < len(words) and words[i].block == b:
-                self.word_offsets.append(block_start + words[i].start)
+                self.word_offsets.append(block_start + _utf16_len(text[:words[i].start]))
                 i += 1
         cursor.endEditBlock()
 
@@ -165,7 +171,7 @@ class ReaderPage(QWidget):
         selection.format.setBackground(_HIGHLIGHT)
         selection.cursor = QTextCursor(self.text.document())
         selection.cursor.setPosition(start)
-        selection.cursor.setPosition(start + len(word.text), QTextCursor.KeepAnchor)
+        selection.cursor.setPosition(start + _utf16_len(word.text), QTextCursor.KeepAnchor)
         self.text.setExtraSelections([selection])
 
         cursor = QTextCursor(self.text.document())
@@ -210,7 +216,7 @@ class ReaderPage(QWidget):
         self.refresh()
 
     def save_position(self) -> None:
-        if self.key is not None and self.model.current is not None:
+        if self.store.find(self.key) is not None and self.model.current is not None:
             self.store.set_position(self.key, *self.model.position)
 
     def _moved(self) -> None:

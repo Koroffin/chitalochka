@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -125,6 +126,32 @@ class ReaderPageTest(unittest.TestCase):
         self.assertTrue(self.page.playing)
         self.page.on_user_scrolled()
         self.assertFalse(self.page.playing)
+
+    def test_offsets_count_utf16_units_after_emoji(self):
+        book = make_book(
+            [
+                {"type": "paragraph", "page": 1, "text": "Альфа 😀 бета гамма."},
+                {"type": "paragraph", "page": 1, "text": "😀😀 Дельта эпсилон."},
+            ]
+        )
+        self.store.add_book("emoji", book)
+        self.page.load("emoji", book)
+        for i, word in enumerate(self.page.model.words):
+            cursor = QTextCursor(self.page.text.document())
+            cursor.setPosition(self.page.word_offsets[i])
+            length = len(word.text.encode("utf-16-le")) // 2
+            cursor.setPosition(self.page.word_offsets[i] + length, QTextCursor.KeepAnchor)
+            self.assertEqual(cursor.selectedText(), word.text)
+            self.page.model.pos = i
+            self.page.refresh()
+            selections = self.page.text.extraSelections()
+            self.assertEqual(selections[0].cursor.selectedText(), word.text)
+
+    def test_load_after_previous_book_removed(self):
+        self.store.add_book("other", self.book)
+        self.store.remove(KEY)
+        self.page.load("other", self.book)
+        self.assertEqual(self.page.key, "other")
 
     def test_large_book_builds_fast(self):
         text = " ".join(f"слово{i}" for i in range(60))
