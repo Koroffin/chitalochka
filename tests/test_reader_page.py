@@ -83,12 +83,15 @@ class ReaderPageTest(unittest.TestCase):
         self.assertGreaterEqual(self.page.model.pos, 2)
         self.page.pause()
         block, word = self.page.model.position
-        self.assertEqual(self.store.find(KEY)["position"], {"block": block, "word": word})
+        self.assertEqual(
+            self.store.find(KEY)["position"],
+            {"block": block, "word": word, "flat": self.page.model.pos},
+        )
 
     def test_keys(self):
         QTest.keyClick(self.page, Qt.Key_Right)
         self.assertEqual(self.page.model.pos, 5)
-        self.assertEqual(self.store.find(KEY)["position"], {"block": 0, "word": 5})
+        self.assertEqual(self.store.find(KEY)["position"], {"block": 0, "word": 5, "flat": 5})
         QTest.keyClick(self.page, Qt.Key_Space)
         self.assertTrue(self.page.playing)
         QTest.keyClick(self.page, Qt.Key_Space)
@@ -111,7 +114,7 @@ class ReaderPageTest(unittest.TestCase):
     def test_click_on_word_moves_position(self):
         self.page.jump_to_document_position(self.page.word_offsets[4] + 1)
         self.assertEqual(self.page.model.pos, 4)
-        self.assertEqual(self.store.find(KEY)["position"], {"block": 0, "word": 4})
+        self.assertEqual(self.store.find(KEY)["position"], {"block": 0, "word": 4, "flat": 4})
 
     def test_bookmark_added_and_listed(self):
         self.page.model.set_position(0, 5)

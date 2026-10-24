@@ -227,7 +227,9 @@ class ReaderPage(QWidget):
 
     def save_position(self) -> None:
         if self.store.find(self.key) is not None and self.model.current is not None:
-            self._write(self.store.set_position, self.key, *self.model.position)
+            self._write(
+                self.store.set_position, self.key, *self.model.position, self.model.pos
+            )
 
     def _moved(self) -> None:
         self.refresh()

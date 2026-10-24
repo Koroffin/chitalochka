@@ -81,7 +81,7 @@ class LibraryPageTest(StoreCase):
         self.fail(f"no row for {title}")
 
     def test_library_lists_books_with_progress(self):
-        self.store.set_position("k", 1, 0)
+        self.store.set_position("k", 1, 0, flat=3)
         self.page.refresh()
         self.assertEqual(self.page.list.count(), 2)
         self.assertEqual(self.row_text("Первая"), "Первая — A — 50 %")
@@ -124,16 +124,14 @@ class LibraryPageTest(StoreCase):
         self.assertIsNone(self.store.find("k"))
         self.assertEqual(self.page.list.count(), 1)
 
-    def test_malformed_book_file_marked_unavailable(self):
-        (self.data_dir / "books" / "k.json").write_text("[]", encoding="utf-8")
-        page = LibraryPage(self.store)
-        self.addCleanup(page.deleteLater)
-        self.page = page
-        self.assertEqual(page.list.count(), 2)
+    def test_refresh_does_not_read_book_files(self):
+        self.store.set_position("k", 1, 0, flat=3)
+        (self.data_dir / "books" / "k.json").write_text("garbage", encoding="utf-8")
+        with mock.patch.object(self.store, "load_book", side_effect=AssertionError):
+            self.page.refresh()
+        self.assertEqual(self.row_text("Первая"), "Первая — A — 50 %")
         self.select("Первая")
-        self.assertIn("не найден", self.row_text("Первая"))
-        self.assertFalse(page.continue_button.isEnabled())
-        self.assertTrue(page.redownload_button.isEnabled())
+        self.assertTrue(self.page.continue_button.isEnabled())
 
 
 class MainWindowTest(StoreCase):
@@ -149,7 +147,9 @@ class MainWindowTest(StoreCase):
         w.reader_page.model.set_position(1, 1)
         w.reader_page.back_requested.emit()
         self.assertIs(w.stack.currentWidget(), w.library_page)
-        self.assertEqual(self.store.find("k")["position"], {"block": 1, "word": 1})
+        self.assertEqual(
+            self.store.find("k")["position"], {"block": 1, "word": 1, "flat": 4}
+        )
         w.add_page.book_ready.emit("k2")
         self.assertIs(w.stack.currentWidget(), w.reader_page)
         self.assertEqual(w.reader_page.model.position, (0, 0))
@@ -158,7 +158,9 @@ class MainWindowTest(StoreCase):
         self.window.open_book("k", False)
         self.window.reader_page.model.set_position(0, 2)
         self.window.close()
-        self.assertEqual(self.store.find("k")["position"], {"block": 0, "word": 2})
+        self.assertEqual(
+            self.store.find("k")["position"], {"block": 0, "word": 2, "flat": 2}
+        )
 
     def test_store_error_goes_to_status_bar(self):
         w = self.window
@@ -170,6 +172,25 @@ class MainWindowTest(StoreCase):
         with mock.patch.object(self.store, "save", side_effect=fail):
             w.reader_page.back_requested.emit()
         self.assertIn("диск", w.statusBar().currentMessage())
+        self.assertIs(w.stack.currentWidget(), w.library_page)
+
+    def test_percent_after_reading_is_flat_over_word_count(self):
+        w = self.window
+        w.open_book("k", False)
+        w.reader_page.model.set_position(1, 1)
+        w.reader_page.back_requested.emit()
+        entry = self.store.find("k")
+        percent = round(100 * entry["position"]["flat"] / entry["word_count"])
+        self.assertEqual(percent, 67)
+        rows = [w.library_page.list.item(i).text() for i in range(w.library_page.list.count())]
+        self.assertIn("Первая — A — 67 %", rows)
+
+    def test_malformed_book_file_reported_on_open(self):
+        w = self.window
+        (self.data_dir / "books" / "k.json").write_text("[]", encoding="utf-8")
+        w.open_book("k", False)
+        self.assertIn("k", w.statusBar().currentMessage())
+        self.assertTrue(w.statusBar().currentMessage().startswith("Ошибка хранилища: "))
         self.assertIs(w.stack.currentWidget(), w.library_page)
 
     def test_reader_store_error_goes_to_status_bar(self):

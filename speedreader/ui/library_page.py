@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
 )
 
 from speedreader.library import LibraryError, LibraryStore
-from speedreader.reading import ReadingModel
 
 _KEY_ROLE = Qt.UserRole
 _AVAILABLE_ROLE = Qt.UserRole + 1
@@ -64,15 +63,9 @@ class LibraryPage(QWidget):
         prefix = f"{entry['title']} — {entry['author']}"
         if not self.store.is_available(entry["key"]):
             return f"{prefix} — файл книги не найден", False
-        try:
-            book = self.store.load_book(entry["key"])
-            percent = 0
-            if entry["word_count"] > 0:
-                pos = entry["position"]
-                flat = ReadingModel(book).flat_index(pos["block"], pos["word"])
-                percent = round(100 * flat / entry["word_count"])
-        except (LibraryError, KeyError, TypeError, AttributeError, ValueError):
-            return f"{prefix} — файл книги не найден", False
+        flat = entry["position"].get("flat", 0)
+        count = entry["word_count"]
+        percent = min(round(100 * flat / count), 100) if count else 0
         return f"{prefix} — {percent} %", True
 
     def refresh(self) -> None:

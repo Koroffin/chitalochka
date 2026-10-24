@@ -70,7 +70,14 @@ def _normalize_entry(raw: dict) -> dict:
     entry["source_url"] = str(raw.get("source_url") or "")
     entry["word_count"] = _non_negative(raw.get("word_count")) or 0
     entry.setdefault("added_at", _now())
-    entry["position"] = _point(raw.get("position")) or {"block": 0, "word": 0}
+    position = _point(raw.get("position"))
+    if position is None:
+        position = {"block": 0, "word": 0}
+    else:
+        flat = _non_negative(raw["position"].get("flat"))
+        if flat is not None:
+            position["flat"] = flat
+    entry["position"] = position
     marks = raw.get("bookmarks")
     entry["bookmarks"] = []
     for mark in marks if isinstance(marks, list) else []:
@@ -174,7 +181,7 @@ class LibraryStore:
             self._entries.insert(0, entry)
         else:
             entry.update(fields)
-            entry["position"] = self._clamp(model, entry["position"])
+            entry["position"] = {**self._clamp(model, entry["position"]), "flat": model.pos}
             entry["bookmarks"] = [
                 {**mark, **self._clamp(model, mark)} for mark in entry["bookmarks"]
             ]
@@ -190,15 +197,24 @@ class LibraryStore:
     def load_book(self, key: str) -> dict:
         path = self._book_path(key)
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            book = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise LibraryError(f"Cannot load book {key}: {exc}") from exc
+        blocks = book.get("blocks") if isinstance(book, dict) else None
+        if not isinstance(blocks, list) or not all(
+            isinstance(b, dict) and isinstance(b.get("text"), str) for b in blocks
+        ):
+            raise LibraryError(f"Cannot load book {key}: not a SpeedReader book")
+        return book
 
     def is_available(self, key: str) -> bool:
         return self.find(key) is not None and self._book_path(key).is_file()
 
-    def set_position(self, key: str, block: int, word: int) -> None:
-        self._get(key)["position"] = {"block": block, "word": word}
+    def set_position(self, key: str, block: int, word: int, flat: int | None = None) -> None:
+        position = {"block": block, "word": word}
+        if flat is not None:
+            position["flat"] = flat
+        self._get(key)["position"] = position
         self.save()
 
     def reset_position(self, key: str) -> None:

@@ -72,7 +72,7 @@ class LibraryStoreTest(unittest.TestCase):
         store.add_book("k", short)
         entry = store.find("k")
         self.assertEqual(len(store.entries), 1)
-        self.assertEqual(entry["position"], {"block": 0, "word": 1})
+        self.assertEqual(entry["position"], {"block": 0, "word": 1, "flat": 1})
         self.assertEqual(entry["bookmarks"][0]["block"], 0)
         self.assertEqual(entry["bookmarks"][0]["word"], 1)
         self.assertEqual(entry["word_count"], 2)
@@ -91,6 +91,22 @@ class LibraryStoreTest(unittest.TestCase):
         (self.tmp / "books" / "k.json").write_text("{", encoding="utf-8")
         with self.assertRaises(LibraryError):
             store.load_book("k")
+
+    def test_book_file_without_blocks_raises(self):
+        store = LibraryStore(self.tmp)
+        store.add_book("k", make_book())
+        for content in ("[]", '{"blocks": [{"type": "paragraph"}]}'):
+            (self.tmp / "books" / "k.json").write_text(content, encoding="utf-8")
+            with self.assertRaises(LibraryError):
+                store.load_book("k")
+
+    def test_position_flat_stored_and_reloaded(self):
+        store = LibraryStore(self.tmp)
+        store.add_book("k", make_book())
+        store.set_position("k", 1, 1, flat=5)
+        self.assertEqual(
+            LibraryStore(self.tmp).find("k")["position"], {"block": 1, "word": 1, "flat": 5}
+        )
 
     def test_unknown_key_raises(self):
         store = LibraryStore(self.tmp)
