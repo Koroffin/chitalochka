@@ -1,14 +1,4 @@
-from bisect import bisect_right
-
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QFontDatabase,
-    QTextBlockFormat,
-    QTextCharFormat,
-    QTextCursor,
-)
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -16,7 +6,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSlider,
-    QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -24,14 +13,9 @@ from PySide6.QtWidgets import (
 
 from speedreader.library import LibraryError, LibraryStore
 from speedreader.reading import ReadingModel
+from speedreader.ui.ticker import TickerView
 
-_HIGHLIGHT = QColor("#ffe58a")
 _LABEL_LEN = 40
-
-
-def _utf16_len(text: str) -> int:
-    # Qt document positions count UTF-16 units; emoji take two.
-    return len(text.encode("utf-16-le")) // 2
 
 
 class ReaderPage(QWidget):
@@ -44,26 +28,15 @@ class ReaderPage(QWidget):
         self.key: str | None = None
         self.book: dict = {"blocks": []}
         self.model = ReadingModel(self.book)
-        self.word_offsets: list[int] = []
         self.setFocusPolicy(Qt.StrongFocus)
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._tick)
 
-        self.text = QTextEdit(readOnly=True)
-        self.text.setUndoRedoEnabled(False)
-        self.text.setMaximumWidth(760)
-        self.text.document().setDocumentMargin(24)
-        font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
-        font.setFamily("Serif")
-        font.setStyleHint(QFont.Serif)
-        font.setPointSize(16)
-        self.text.document().setDefaultFont(font)
-        self._viewport = self.text.viewport()
-        self.text.installEventFilter(self)
-        self._viewport.installEventFilter(self)
-        self.text.verticalScrollBar().sliderPressed.connect(self.on_user_scrolled)
+        self.ticker = TickerView()
+        self.ticker.setMaximumWidth(960)
+        self.ticker.clicked.connect(self.toggle)
 
         self.play_button = QToolButton()
         self.play_button.clicked.connect(self.toggle)
@@ -101,7 +74,7 @@ class ReaderPage(QWidget):
             bar.addWidget(widget)
         column = QHBoxLayout()
         column.addStretch()
-        column.addWidget(self.text, 1)
+        column.addWidget(self.ticker, 1)
         column.addStretch()
         layout = QVBoxLayout(self)
         layout.addLayout(column, 1)
@@ -122,72 +95,22 @@ class ReaderPage(QWidget):
         if not restart:
             pos = self.store.find(key)["position"]
             self.model.set_position(pos["block"], pos["word"])
-        self._build_document()
         self._fill_bookmarks()
         self.refresh()
 
-    def _build_document(self) -> None:
-        doc = self.text.document()
-        doc.clear()
-        base = doc.defaultFont()
-        plain = QTextCharFormat()
-        plain.setFont(base)
-        heading = QTextCharFormat()
-        heading.setFont(base)
-        heading.setFontWeight(QFont.Bold)
-        heading.setFontPointSize(base.pointSizeF() * 1.3)
-        indented = QTextBlockFormat()
-        indented.setTextIndent(24)
-        flat = QTextBlockFormat()
-
-        self.word_offsets = []
-        words = self.model.words
-        i = 0
-        cursor = QTextCursor(doc)
-        # One edit block: otherwise a visible widget relayouts after every insert.
-        cursor.beginEditBlock()
-        for b, block in enumerate(self.book.get("blocks", [])):
-            is_heading = block.get("type") == "heading"
-            block_format = flat if is_heading else indented
-            if b == 0:
-                cursor.setBlockFormat(block_format)
-            else:
-                cursor.insertBlock(block_format)
-            block_start = cursor.position()
-            text = block["text"]
-            cursor.insertText(text, heading if is_heading else plain)
-            while i < len(words) and words[i].block == b:
-                self.word_offsets.append(block_start + _utf16_len(text[:words[i].start]))
-                i += 1
-        cursor.endEditBlock()
-
     def refresh(self) -> None:
-        word = self.model.current
+        words = self.model.words
+        pos = self.model.pos
         self.play_button.setText("Пауза" if self.playing else "Старт")
         self.status_label.setText(f"{round(self.model.progress * 100)} %")
-        if word is None:
-            self.text.setExtraSelections([])
+        if not words:
+            self.ticker.set_words("", "", "")
             return
-        start = self.word_offsets[self.model.pos]
-        selection = QTextEdit.ExtraSelection()
-        selection.format.setBackground(_HIGHLIGHT)
-        selection.cursor = QTextCursor(self.text.document())
-        selection.cursor.setPosition(start)
-        selection.cursor.setPosition(start + _utf16_len(word.text), QTextCursor.KeepAnchor)
-        self.text.setExtraSelections([selection])
-
-        cursor = QTextCursor(self.text.document())
-        cursor.setPosition(start)
-        self.text.setTextCursor(cursor)
-        self.text.ensureCursorVisible()
-        if self.text.cursorRect().bottom() > self._viewport.height() * 2 / 3:
-            self._center_cursor()
-
-    def _center_cursor(self) -> None:
-        # QTextEdit has no centerCursor(); only QPlainTextEdit does.
-        bar = self.text.verticalScrollBar()
-        offset = self.text.cursorRect().center().y() - self._viewport.height() // 2
-        bar.setValue(bar.value() + offset)
+        self.ticker.set_words(
+            words[pos - 1].text if pos > 0 else "",
+            words[pos].text,
+            words[pos + 1].text if pos + 1 < len(words) else "",
+        )
 
     def current_delay_ms(self) -> int:
         return round(self.model.delay(self.store.wpm) * 1000)
@@ -197,7 +120,6 @@ class ReaderPage(QWidget):
             return
         self._timer.start(self.current_delay_ms())
         self.refresh()
-        self._center_cursor()
 
     def pause(self, save: bool = True) -> None:
         self._timer.stop()
@@ -234,17 +156,6 @@ class ReaderPage(QWidget):
     def _moved(self) -> None:
         self.refresh()
         self.save_position()
-
-    def jump_to_document_position(self, pos: int) -> None:
-        if not self.word_offsets:
-            return
-        idx = max(bisect_right(self.word_offsets, pos) - 1, 0)
-        self.model.set_position(*self.model.words[idx].position)
-        self._moved()
-
-    def on_user_scrolled(self) -> None:
-        if self.playing:
-            self.pause()
 
     def add_bookmark(self) -> None:
         word = self.model.current
@@ -305,17 +216,6 @@ class ReaderPage(QWidget):
     def keyPressEvent(self, event) -> None:
         if not self._handle_key(event):
             super().keyPressEvent(event)
-
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        if obj is self.text and event.type() == QEvent.KeyPress:
-            return self._handle_key(event)
-        if obj is self._viewport:
-            if event.type() == QEvent.Wheel:
-                self.on_user_scrolled()
-            elif event.type() == QEvent.MouseButtonPress:
-                pos = self.text.cursorForPosition(event.position().toPoint()).position()
-                self.jump_to_document_position(pos)
-        return super().eventFilter(obj, event)
 
     def hideEvent(self, event) -> None:
         self.pause()

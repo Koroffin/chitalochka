@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -58,23 +57,25 @@ class ReaderPageTest(unittest.TestCase):
         self.addCleanup(self.page.deleteLater)
         self.page.load(KEY, self.book)
 
-    def test_document_offsets_match_words(self):
-        doc_text = self.page.text.document().toPlainText()
+    def test_ticker_shows_previous_current_next(self):
         words = self.page.model.words
-        self.assertEqual(len(self.page.word_offsets), len(words))
-        for off, w in zip(self.page.word_offsets, words):
-            self.assertEqual(doc_text[off:off + len(w.text)], w.text)
-
-    def test_highlight_follows_position(self):
-        model = self.page.model
-        model.set_position(1, 0)
+        t = self.page.ticker
+        self.assertEqual((t.previous, t.current, t.following), ("", words[0].text, words[1].text))
+        self.page.model.set_position(1, 0)
         self.page.refresh()
-        selections = self.page.text.extraSelections()
-        self.assertEqual(len(selections), 1)
-        cursor = selections[0].cursor
-        off = self.page.word_offsets[model.pos]
-        self.assertEqual(cursor.selectionStart(), off)
-        self.assertEqual(cursor.selectionEnd(), off + len(model.current.text))
+        i = self.page.model.pos
+        self.assertEqual((t.previous, t.current, t.following), (words[i - 1].text, words[i].text, words[i + 1].text))
+        self.page.model.pos = len(words) - 1
+        self.page.refresh()
+        self.assertEqual((t.previous, t.current, t.following), (words[-2].text, words[-1].text, ""))
+
+    def test_ticker_paints_highlight_in_the_middle(self):
+        image = self.page.ticker.grab().toImage()
+        self.assertFalse(image.isNull())
+        y = image.height() // 2
+        row = [image.pixelColor(x, y).name() for x in range(image.width())]
+        self.assertIn("#ffe58a", row)
+        self.assertNotEqual(row[0], "#ffe58a")
 
     def test_play_advances_with_timer(self):
         self.store.wpm = 1000
@@ -101,8 +102,8 @@ class ReaderPageTest(unittest.TestCase):
         QTest.keyClick(self.page, Qt.Key_Escape)
         self.assertEqual(emitted, [True])
 
-    def test_keys_reach_page_from_text_widget(self):
-        QTest.keyClick(self.page.text, Qt.Key_Down)
+    def test_keys_reach_page_from_ticker(self):
+        QTest.keyClick(self.page.ticker, Qt.Key_Down)
         self.assertEqual(self.page.model.position, (1, 0))
 
     def test_slider_changes_store_wpm(self):
@@ -112,10 +113,12 @@ class ReaderPageTest(unittest.TestCase):
         expected = round(delay_for(m.current, 400, m.weights(400)[m.pos]) * 1000)
         self.assertEqual(self.page.current_delay_ms(), expected)
 
-    def test_click_on_word_moves_position(self):
-        self.page.jump_to_document_position(self.page.word_offsets[4] + 1)
-        self.assertEqual(self.page.model.pos, 4)
-        self.assertEqual(self.store.find(KEY)["position"], {"block": 0, "word": 4, "flat": 4})
+    def test_click_on_ticker_toggles_play(self):
+        QTest.mouseClick(self.page.ticker, Qt.LeftButton)
+        self.assertTrue(self.page.playing)
+        QTest.mouseClick(self.page.ticker, Qt.LeftButton)
+        self.assertFalse(self.page.playing)
+        self.assertEqual(self.store.find(KEY)["position"], {"block": 0, "word": 0, "flat": 0})
 
     def test_bookmark_added_and_listed(self):
         self.page.model.set_position(0, 5)
@@ -127,13 +130,7 @@ class ReaderPageTest(unittest.TestCase):
         self.assertEqual(self.page.bookmarks_box.count(), 1)
         self.assertEqual(len(self.store.find(KEY)["bookmarks"]), 1)
 
-    def test_manual_scroll_pauses(self):
-        self.page.play()
-        self.assertTrue(self.page.playing)
-        self.page.on_user_scrolled()
-        self.assertFalse(self.page.playing)
-
-    def test_offsets_count_utf16_units_after_emoji(self):
+    def test_emoji_words_shown_whole(self):
         book = make_book(
             [
                 {"type": "paragraph", "page": 1, "text": "Альфа 😀 бета гамма."},
@@ -143,22 +140,16 @@ class ReaderPageTest(unittest.TestCase):
         self.store.add_book("emoji", book)
         self.page.load("emoji", book)
         for i, word in enumerate(self.page.model.words):
-            cursor = QTextCursor(self.page.text.document())
-            cursor.setPosition(self.page.word_offsets[i])
-            length = len(word.text.encode("utf-16-le")) // 2
-            cursor.setPosition(self.page.word_offsets[i] + length, QTextCursor.KeepAnchor)
-            self.assertEqual(cursor.selectedText(), word.text)
             self.page.model.pos = i
             self.page.refresh()
-            selections = self.page.text.extraSelections()
-            self.assertEqual(selections[0].cursor.selectedText(), word.text)
+            self.assertEqual(self.page.ticker.current, word.text)
 
     def test_block_without_type_loads(self):
         book = make_book([{"text": "Раз два."}, {"type": "heading", "text": "Три"}])
         self.store.add_book("notype", book)
         self.page.load("notype", book)
         self.assertEqual(self.page.model.word_count, 3)
-        self.assertEqual(len(self.page.word_offsets), 3)
+        self.assertEqual(self.page.ticker.current, "Раз")
 
     def test_load_after_previous_book_removed(self):
         self.store.add_book("other", self.book)
