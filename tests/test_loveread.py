@@ -1,4 +1,6 @@
+import contextlib
 import http.client
+import io
 import json
 import pathlib
 import tempfile
@@ -244,14 +246,18 @@ class Fetch(unittest.TestCase):
 class Cli(unittest.TestCase):
     def test_invalid_numeric_options_are_rejected(self):
         for argv in (["1", "--delay", "-1"], ["1", "--retries", "0"], ["1", "--max-pages", "0"]):
-            with self.assertRaises(SystemExit, msg=argv) as ctx:
+            err = io.StringIO()
+            with self.assertRaises(SystemExit, msg=argv) as ctx, contextlib.redirect_stderr(err):
                 loveread.main(argv)
             self.assertEqual(ctx.exception.code, 2, argv)
+            self.assertIn(argv[1], err.getvalue())
 
     def test_txt_equal_to_output_is_rejected(self):
-        with self.assertRaises(SystemExit) as ctx:
+        err = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx, contextlib.redirect_stderr(err):
             loveread.main(["1", "-o", "same.json", "--txt", "same.json"])
         self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("--txt and -o point to the same file", err.getvalue())
 
     def test_partial_result_written_on_failure(self):
         pages = {1: reader_page(1, 2, "<p>один</p>")}
@@ -266,8 +272,13 @@ class Cli(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             out = pathlib.Path(tmp) / "b.json"
-            code = loveread.main(["36708", "-o", str(out), "--delay", "0", "-q"], fetcher=fetcher)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = loveread.main(
+                    ["36708", "-o", str(out), "--delay", "0", "-q"], fetcher=fetcher
+                )
             self.assertEqual(code, 1)
+            self.assertIn("network down", err.getvalue())
             saved = json.loads(out.read_text(encoding="utf-8"))
             self.assertEqual((saved["complete"], saved["pages_fetched"], len(saved["blocks"])), (False, 1, 1))
 
