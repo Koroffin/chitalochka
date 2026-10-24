@@ -1,0 +1,114 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APT_PACKAGES: >-
+    libegl1 libxkbcommon0 libxcb-cursor0 libgl1 libdbus-1-3 libfontconfig1
+    libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0
+    libxcb-render-util0 libxcb-shape0
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
+      - run: pip install -e . pyinstaller
+      - run: python -m unittest discover -s tests -t .
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            line=$(python packaging/set_version.py "$GITHUB_REF_NAME")
+          else
+            line=$(python packaging/set_version.py "0.0.0.dev$GITHUB_RUN_NUMBER")
+          fi
+          echo "$line"
+          for kv in $line; do echo "$kv" >> "$GITHUB_OUTPUT"; done
+      - run: pip install -e . pyinstaller
+      - name: Build onefile exe
+        run: |
+          $env:SPEEDREADER_ONEFILE = "1"
+          pyinstaller packaging/speedreader.spec --noconfirm
+      - name: Smoke test
+        run: |
+          # A windowed exe started directly does not block PowerShell and sets no $LASTEXITCODE.
+          $p = Start-Process -FilePath dist\SpeedReader.exe -ArgumentList "--smoke", "--data-dir", "$env:RUNNER_TEMP\sr" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpeedReader.exe
+          path: dist/SpeedReader.exe
+          if-no-files-found: error
+
+  build-linux:
+    needs: test
+    runs-on: ubuntu-22.04
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            line=$(python packaging/set_version.py "$GITHUB_REF_NAME")
+          else
+            line=$(python packaging/set_version.py "0.0.0.dev$GITHUB_RUN_NUMBER")
+          fi
+          echo "$line"
+          for kv in $line; do echo "$kv" >> "$GITHUB_OUTPUT"; done
+      - run: pip install -e . pyinstaller
+      - run: pyinstaller packaging/speedreader.spec --noconfirm
+      - run: dist/SpeedReader/SpeedReader --smoke --data-dir "$RUNNER_TEMP/sr"
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: bash packaging/build_deb.sh "${{ steps.version.outputs.deb }}" dist/SpeedReader out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speedreader-deb
+          path: out/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SpeedReader.exe
+            *.deb
+          prerelease: ${{ needs.build-linux.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          body: "Windows: при первом запуске нажмите «Подробнее» → «Выполнить в любом случае» (exe не подписан)."

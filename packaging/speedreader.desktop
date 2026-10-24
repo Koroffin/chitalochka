@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SpeedReader
+Comment=Чтение с бегущей подсветкой
+Exec=/usr/bin/speedreader
+Icon=speedreader
+Terminal=false
+Categories=Office;Education;
+StartupWMClass=SpeedReader

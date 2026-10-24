@@ -1,4 +1,38 @@
-# loveread parser
+# SpeedReader
+
+Desktop reader with a running word highlight for loveread.ec books.
+
+## Установка
+
+Скачайте файл со страницы релизов: https://github.com/<owner>/<repo>/releases
+
+- Ubuntu: `sudo apt install ./speedreader_*.deb`, затем `speedreader` или ярлык в меню.
+- Windows: `SpeedReader.exe` запускается напрямую, установка не нужна. Exe не
+  подписан: при первом запуске нажмите «Подробнее» → «Выполнить в любом случае».
+
+Библиотека книг лежит в `~/.local/share/SpeedReader` (Linux) и
+`%APPDATA%\SpeedReader` (Windows).
+
+## Сборка
+
+    python3 -m venv .venv
+    .venv/bin/pip install -e . pyinstaller
+    QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -t .
+
+Папка с программой (onedir) и её проверка:
+
+    .venv/bin/pyinstaller packaging/speedreader.spec --noconfirm --distpath dist --workpath build
+    QT_QPA_PLATFORM=offscreen dist/SpeedReader/SpeedReader --smoke --data-dir /tmp/sr-pyi
+
+Deb-пакет из этой папки (нужны `dpkg-deb`), результат в `out/`:
+
+    bash packaging/build_deb.sh 0.0.0 dist/SpeedReader out
+
+Windows exe собирается только в CI (`.github/workflows/build.yml`): тег `v*`
+публикует релиз с exe и deb, ручной запуск workflow даёт артефакты без релиза.
+Иконки пересобираются из `assets/make_icons.py` системным `python3` с Pillow.
+
+# Парсер loveread
 
 Downloads a book from loveread.ec into JSON for the speed-reading tool.
 
@@ -38,4 +72,4 @@ to the last page), the pages fetched so far are still written with
 
 ## Tests
 
-    python3 -m unittest discover -s tests -t .
+    python3 -m unittest tests.test_loveread

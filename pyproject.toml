@@ -13,3 +13,6 @@ speedreader = "speedreader.app:main"
 
 [tool.setuptools.packages.find]
 include = ["speedreader*"]
+
+[tool.setuptools.package-data]
+speedreader = ["assets/*"]
