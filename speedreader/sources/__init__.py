@@ -1,4 +1,6 @@
+import hashlib
 import json
+import re
 import urllib.parse
 
 from speedreader.sources import loveread
@@ -67,7 +69,10 @@ def detect(url):
 
 def book_key(book):
     prefix = "loveread" if "loveread.ec" in str(book.get("source", "")) else "import"
-    return f"{prefix}-{book['id']}"
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "", str(book["id"]))
+    if not safe_id:
+        safe_id = hashlib.sha1(str(book.get("title", "")).encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}-{safe_id}"
 
 
 def import_book_json(path):
@@ -77,7 +82,9 @@ def import_book_json(path):
             data = json.load(f)
     except (OSError, ValueError) as e:
         raise SourceError(f"Не удалось прочитать файл: {e}") from e
-    if not isinstance(data, dict) or "id" not in data or "title" not in data:
+    if not isinstance(data, dict) or "title" not in data:
+        raise not_a_book
+    if isinstance(data.get("id"), bool) or not isinstance(data.get("id"), (int, str)):
         raise not_a_book
     blocks = data.get("blocks")
     if not isinstance(blocks, list) or not all(

@@ -83,6 +83,19 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(book_key({"id": 7, "source": ""}), "import-7")
         self.assertEqual(book_key({"id": 7}), "import-7")
 
+    def test_book_key_cannot_escape_books_dir(self):
+        self.assertEqual(book_key({"id": "../x", "title": "T"}), "import-..x")
+        self.assertEqual(book_key({"id": "a/b\\c d", "title": "T"}), "import-abcd")
+        empty = book_key({"id": "/", "title": "T"})
+        self.assertRegex(empty, r"^import-[0-9a-f]{12}$")
+        self.assertEqual(empty, book_key({"id": "", "title": "T"}))
+
+    def test_import_rejects_id_of_wrong_type(self):
+        for book_id in ([1], {"a": 1}, None, True):
+            book = {"id": book_id, "title": "Т", "blocks": []}
+            with self.subTest(book_id=book_id), self.assertRaises(SourceError):
+                import_book_json(self.write(json.dumps(book)))
+
 
 if __name__ == "__main__":
     unittest.main()
