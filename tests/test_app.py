@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import io
 import sys
 import tempfile
 import unittest
@@ -238,7 +239,8 @@ class MainWindowTest(StoreCase):
 
 class MainTest(unittest.TestCase):
     def test_default_data_dir_has_single_app_component(self):
-        main(["--smoke", "--data-dir", tempfile.gettempdir()])
+        with tempfile.TemporaryDirectory() as tmp:
+            main(["--smoke", "--data-dir", tmp])
         path = default_data_dir()
         self.assertEqual(path.name, "SpeedReader")
         self.assertNotEqual(path.parent.name, "SpeedReader")
@@ -246,6 +248,19 @@ class MainTest(unittest.TestCase):
     def test_main_smoke_returns_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(main(["--smoke", "--data-dir", tmp]), 0)
+        self.assertEqual(QApplication.instance().desktopFileName(), "speedreader")
+
+    def test_startup_store_error_shown_in_message_box(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = Path(tmp) / "afile"
+            blocker.write_text("x", encoding="utf-8")
+            with mock.patch("speedreader.app.QMessageBox.critical") as critical, \
+                    mock.patch("sys.stderr", new_callable=io.StringIO):
+                code = main(["--data-dir", str(blocker / "sub")])
+        self.assertEqual(code, 1)
+        critical.assert_called_once()
+        self.assertIn("Ошибка хранилища", critical.call_args.args[2])
+        self.assertIn("afile", critical.call_args.args[2])
 
 
 if __name__ == "__main__":

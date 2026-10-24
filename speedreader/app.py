@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, QTimer
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
+from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget
 
 from speedreader.library import LibraryError, LibraryStore
 from speedreader.ui import add_page as add_page_module
@@ -107,11 +107,14 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("SpeedReader")
+    QGuiApplication.setDesktopFileName("speedreader")
     data_dir = args.data_dir or default_data_dir()
     try:
         store = LibraryStore(data_dir)
     except LibraryError as e:
-        print(f"Ошибка хранилища: {e}", file=sys.stderr)
+        message = f"Ошибка хранилища: {e}"
+        print(message, file=sys.stderr)
+        QMessageBox.critical(None, "SpeedReader", message)
         return 1
 
     window = MainWindow(store)
