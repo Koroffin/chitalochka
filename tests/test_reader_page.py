@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import json
 import tempfile
 import time
 import unittest
@@ -166,6 +167,20 @@ class ReaderPageTest(unittest.TestCase):
         elapsed = time.perf_counter() - started
         self.assertEqual(self.page.model.word_count, 60000)
         self.assertLess(elapsed, 2.0)
+
+    def test_out_of_range_wpm_in_file_reads_at_1000(self):
+        path = Path(self.store._dir) / "library.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["wpm"] = 5000
+        path.write_text(json.dumps(data), encoding="utf-8")
+        store = LibraryStore(path.parent)
+        page = ReaderPage(store)
+        self.addCleanup(page.deleteLater)
+        page.load(KEY, self.book)
+        self.assertEqual(page.wpm_slider.value(), 1000)
+        self.assertEqual(page.wpm_label.text(), "1000 сл/мин")
+        expected = round(delay_for(page.model.current, 1000) * 1000)
+        self.assertEqual(page.current_delay_ms(), expected)
 
     def failing_save(self):
         errors = []

@@ -144,5 +144,76 @@ class LibraryStoreTest(unittest.TestCase):
             LibraryStore(blocker / "sub")
 
 
+class HandEditedLibraryTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        LibraryStore(self.tmp).add_book("k", make_book())
+
+    def reload(self, mutate):
+        path = self.tmp / "library.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        mutate(data)
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return LibraryStore(self.tmp)
+
+    def test_missing_optional_fields_get_defaults(self):
+        def drop(data):
+            for field in ("position", "bookmarks", "author", "source_url", "word_count"):
+                del data["books"][0][field]
+
+        entry = self.reload(drop).find("k")
+        self.assertEqual(entry["position"], {"block": 0, "word": 0})
+        self.assertEqual(entry["bookmarks"], [])
+        self.assertEqual(entry["author"], "")
+        self.assertEqual(entry["source_url"], "")
+        self.assertEqual(entry["word_count"], 0)
+
+    def test_missing_key_quarantines_file(self):
+        store = self.reload(lambda d: d["books"][0].pop("key"))
+        self.assertEqual(store.entries, [])
+        self.assertIsNone(store.find("k"))
+        self.assertTrue((self.tmp / "library.json.broken").exists())
+
+    def test_title_not_string_quarantines_file(self):
+        store = self.reload(lambda d: d["books"][0].__setitem__("title", 5))
+        self.assertEqual(store.entries, [])
+        self.assertTrue((self.tmp / "library.json.broken").exists())
+
+    def test_position_as_list_becomes_start(self):
+        store = self.reload(lambda d: d["books"][0].__setitem__("position", [1, 1]))
+        self.assertEqual(store.find("k")["position"], {"block": 0, "word": 0})
+
+    def test_position_fields_coerced_to_non_negative_ints(self):
+        store = self.reload(
+            lambda d: d["books"][0].__setitem__("position", {"block": "1", "word": -3})
+        )
+        self.assertEqual(store.find("k")["position"], {"block": 1, "word": 0})
+
+    def test_malformed_bookmarks_dropped(self):
+        marks = [
+            {"block": "1", "word": 1, "label": "ok", "created_at": "t"},
+            "junk",
+            {"block": [], "word": 0, "label": "bad"},
+        ]
+        store = self.reload(lambda d: d["books"][0].__setitem__("bookmarks", marks))
+        self.assertEqual(
+            store.find("k")["bookmarks"],
+            [{"block": 1, "word": 1, "label": "ok", "created_at": "t"}],
+        )
+
+    def test_wpm_clamped(self):
+        self.assertEqual(self.reload(lambda d: d.__setitem__("wpm", 0)).wpm, 100)
+        self.assertEqual(self.reload(lambda d: d.__setitem__("wpm", -5)).wpm, 100)
+        self.assertEqual(self.reload(lambda d: d.__setitem__("wpm", 5000)).wpm, 1000)
+        self.assertEqual(self.reload(lambda d: d.__setitem__("wpm", "x")).wpm, 250)
+
+    def test_wpm_setter_clamps(self):
+        store = LibraryStore(self.tmp)
+        store.wpm = 0
+        self.assertEqual(store.wpm, 100)
+
+
 if __name__ == "__main__":
     unittest.main()

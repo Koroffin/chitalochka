@@ -8,6 +8,8 @@ from speedreader.reading import ReadingModel
 
 _VERSION = 1
 _DEFAULT_WPM = 250
+_MIN_WPM = 100
+_MAX_WPM = 1000
 
 
 class LibraryError(Exception):
@@ -33,6 +35,53 @@ def _write_atomic(path: Path, data: dict) -> None:
         raise LibraryError(f"Cannot write {path}: {exc}") from exc
 
 
+def _non_negative(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _clamp_wpm(value) -> int:
+    try:
+        wpm = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return _DEFAULT_WPM
+    return max(_MIN_WPM, min(wpm, _MAX_WPM))
+
+
+def _point(raw) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    block = _non_negative(raw.get("block"))
+    word = _non_negative(raw.get("word"))
+    if block is None or word is None:
+        return None
+    return {"block": block, "word": word}
+
+
+def _normalize_entry(raw: dict) -> dict:
+    if not isinstance(raw.get("key"), str) or not isinstance(raw.get("title"), str):
+        raise ValueError("book entry needs string key and title")
+    entry = dict(raw)
+    entry["author"] = str(raw.get("author") or "")
+    entry["source_url"] = str(raw.get("source_url") or "")
+    entry["word_count"] = _non_negative(raw.get("word_count")) or 0
+    entry.setdefault("added_at", _now())
+    entry["position"] = _point(raw.get("position")) or {"block": 0, "word": 0}
+    marks = raw.get("bookmarks")
+    entry["bookmarks"] = []
+    for mark in marks if isinstance(marks, list) else []:
+        point = _point(mark)
+        if point is not None:
+            entry["bookmarks"].append(
+                {**mark, **point, "label": str(mark.get("label") or "")}
+            )
+    return entry
+
+
 class LibraryStore:
     def __init__(self, data_dir: Path):
         self._dir = Path(data_dir)
@@ -52,11 +101,11 @@ class LibraryStore:
 
     @property
     def wpm(self) -> int:
-        return self._wpm
+        return _clamp_wpm(self._wpm)
 
     @wpm.setter
     def wpm(self, value: int) -> None:
-        self._wpm = int(value)
+        self._wpm = _clamp_wpm(value)
         self.save()
 
     def _load(self) -> None:
@@ -65,16 +114,16 @@ class LibraryStore:
         try:
             data = json.loads(self._index.read_text(encoding="utf-8"))
             books = data["books"]
-            wpm = int(data.get("wpm", _DEFAULT_WPM))
             if not isinstance(books, list) or not all(isinstance(b, dict) for b in books):
                 raise ValueError("books must be a list of objects")
+            entries = [_normalize_entry(b) for b in books]
         except (ValueError, KeyError, TypeError, AttributeError):
             self._quarantine()
             return
         except OSError as exc:
             raise LibraryError(f"Cannot read {self._index}: {exc}") from exc
-        self._wpm = wpm
-        self._entries = books
+        self._wpm = _clamp_wpm(data.get("wpm", _DEFAULT_WPM))
+        self._entries = entries
 
     def _quarantine(self) -> None:
         try:
