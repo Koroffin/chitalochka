@@ -12,10 +12,11 @@ from PySide6.QtWidgets import (
 )
 
 from speedreader.library import LibraryError, LibraryStore
-from speedreader.reading import ReadingModel
+from speedreader.reading import ReadingModel, Word
 from speedreader.ui.ticker import TickerView
 
 _LABEL_LEN = 40
+_PARAGRAPH_MARK = " ¶"
 
 
 class ReaderPage(QWidget):
@@ -106,11 +107,19 @@ class ReaderPage(QWidget):
         if not words:
             self.ticker.set_words("", "", "")
             return
-        self.ticker.set_words(
-            words[pos - 1].text if pos > 0 else "",
-            words[pos].text,
-            words[pos + 1].text if pos + 1 < len(words) else "",
-        )
+        slots = [
+            self._slot(words[pos - 1]) if pos > 0 else ("", False),
+            self._slot(words[pos]),
+            self._slot(words[pos + 1]) if pos + 1 < len(words) else ("", False),
+        ]
+        self.ticker.set_words(*(text for text, _ in slots), bold=tuple(b for _, b in slots))
+
+    def _slot(self, word: Word) -> tuple[str, bool]:
+        block = self.book["blocks"][word.block]
+        text = word.text
+        if word.last_in_block and word.block + 1 < len(self.book["blocks"]):
+            text += _PARAGRAPH_MARK
+        return text, block.get("type") == "heading"
 
     def current_delay_ms(self) -> int:
         return round(self.model.delay(self.store.wpm) * 1000)

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 from speedreader.library import LibraryError, LibraryStore
 from speedreader.reading import delay_for
 from speedreader.ui.reader_page import ReaderPage
+from speedreader.ui.ticker import HIGHLIGHT, TickerView
 
 KEY = "loveread-1"
 _app = None
@@ -45,6 +46,14 @@ def make_book(blocks=None):
     }
 
 
+def highlight_width(ticker):
+    # The first highlighted row is padding above the glyphs, so its width is the box width.
+    image = ticker.grab().toImage()
+    x = image.width() // 2
+    y = next(y for y in range(image.height()) if image.pixelColor(x, y) == HIGHLIGHT)
+    return sum(image.pixelColor(x, y) == HIGHLIGHT for x in range(image.width()))
+
+
 class ReaderPageTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -63,8 +72,7 @@ class ReaderPageTest(unittest.TestCase):
         self.assertEqual((t.previous, t.current, t.following), ("", words[0].text, words[1].text))
         self.page.model.set_position(1, 0)
         self.page.refresh()
-        i = self.page.model.pos
-        self.assertEqual((t.previous, t.current, t.following), (words[i - 1].text, words[i].text, words[i + 1].text))
+        self.assertEqual((t.previous, t.current, t.following), ("семь. ¶", "Глава", "вторая ¶"))
         self.page.model.pos = len(words) - 1
         self.page.refresh()
         self.assertEqual((t.previous, t.current, t.following), (words[-2].text, words[-1].text, ""))
@@ -76,6 +84,29 @@ class ReaderPageTest(unittest.TestCase):
         row = [image.pixelColor(x, y).name() for x in range(image.width())]
         self.assertIn("#ffe58a", row)
         self.assertNotEqual(row[0], "#ffe58a")
+
+    def test_block_end_marked_and_heading_bold(self):
+        t = self.page.ticker
+        self.page.model.set_position(0, 6)
+        self.page.refresh()
+        self.assertEqual((t.previous, t.current, t.following), ("Шесть", "семь. ¶", "Глава"))
+        self.assertEqual(t.bold, (False, False, True))
+        self.page.model.set_position(1, 1)
+        self.page.refresh()
+        self.assertEqual((t.previous, t.current, t.following), ("Глава", "вторая ¶", "Восемь,"))
+        self.assertEqual(t.bold, (True, True, False))
+        self.page.model.pos = len(self.page.model.words) - 1
+        self.page.refresh()
+        self.assertEqual(t.current, "десять!")
+
+    def test_bold_word_paints_wider_highlight(self):
+        ticker = TickerView()
+        ticker.resize(900, 200)
+        self.addCleanup(ticker.deleteLater)
+        ticker.set_words("", "Глава", "")
+        regular = highlight_width(ticker)
+        ticker.set_words("", "Глава", "", bold=(False, True, False))
+        self.assertGreater(highlight_width(ticker), regular)
 
     def test_play_advances_with_timer(self):
         self.store.wpm = 1000
@@ -142,7 +173,7 @@ class ReaderPageTest(unittest.TestCase):
         for i, word in enumerate(self.page.model.words):
             self.page.model.pos = i
             self.page.refresh()
-            self.assertEqual(self.page.ticker.current, word.text)
+            self.assertEqual(self.page.ticker.current.removesuffix(" ¶"), word.text)
 
     def test_block_without_type_loads(self):
         book = make_book([{"text": "Раз два."}, {"type": "heading", "text": "Три"}])
