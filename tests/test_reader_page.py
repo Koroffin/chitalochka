@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from speedreader.idle import IdleInhibitor
 from speedreader.library import LibraryError, LibraryStore
 from speedreader.reading import delay_for
 from speedreader.ui.reader_page import ReaderPage
@@ -46,6 +47,18 @@ def make_book(blocks=None):
     }
 
 
+class FakeBackend:
+    def __init__(self):
+        self.acquired = 0
+        self.released = 0
+
+    def acquire(self):
+        self.acquired += 1
+
+    def release(self):
+        self.released += 1
+
+
 def highlight_width(ticker):
     # The first highlighted row is padding above the glyphs, so its width is the box width.
     image = ticker.grab().toImage()
@@ -61,7 +74,8 @@ class ReaderPageTest(unittest.TestCase):
         self.store = LibraryStore(Path(tmp.name))
         self.book = make_book()
         self.store.add_book(KEY, self.book)
-        self.page = ReaderPage(self.store)
+        self.backend = FakeBackend()
+        self.page = ReaderPage(self.store, inhibitor=IdleInhibitor(self.backend))
         self.page.resize(900, 600)
         self.addCleanup(self.page.deleteLater)
         self.page.load(KEY, self.book)
@@ -107,6 +121,20 @@ class ReaderPageTest(unittest.TestCase):
         regular = highlight_width(ticker)
         ticker.set_words("", "Глава", "", bold=(False, True, False))
         self.assertGreater(highlight_width(ticker), regular)
+
+    def test_playback_keeps_computer_awake(self):
+        self.page.show()
+        self.page.play()
+        self.assertEqual((self.backend.acquired, self.backend.released), (1, 0))
+        self.page.pause()
+        self.assertEqual((self.backend.acquired, self.backend.released), (1, 1))
+        self.page.play()
+        self.page.hide()
+        self.assertEqual((self.backend.acquired, self.backend.released), (2, 2))
+        self.page.show()
+        self.page.play()
+        self.page.load(KEY, self.book, restart=True)
+        self.assertEqual((self.backend.acquired, self.backend.released), (3, 3))
 
     def test_play_advances_with_timer(self):
         self.store.wpm = 1000

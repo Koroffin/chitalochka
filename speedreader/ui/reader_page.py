@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from speedreader.idle import IdleInhibitor
 from speedreader.library import LibraryError, LibraryStore
 from speedreader.reading import ReadingModel, Word
 from speedreader.ui.ticker import TickerView
@@ -23,9 +24,15 @@ class ReaderPage(QWidget):
     back_requested = Signal()
     store_error = Signal(str)
 
-    def __init__(self, store: LibraryStore, parent: QWidget | None = None):
+    def __init__(
+        self,
+        store: LibraryStore,
+        parent: QWidget | None = None,
+        inhibitor: IdleInhibitor | None = None,
+    ):
         super().__init__(parent)
         self.store = store
+        self.inhibitor = inhibitor if inhibitor is not None else IdleInhibitor()
         self.key: str | None = None
         self.book: dict = {"blocks": []}
         self.model = ReadingModel(self.book)
@@ -127,11 +134,13 @@ class ReaderPage(QWidget):
     def play(self) -> None:
         if self.playing or self.model.pos + 1 >= self.model.word_count:
             return
+        self.inhibitor.acquire()
         self._timer.start(self.current_delay_ms())
         self.refresh()
 
     def pause(self, save: bool = True) -> None:
         self._timer.stop()
+        self.inhibitor.release()
         self.refresh()
         if save:
             self.save_position()
