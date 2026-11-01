@@ -195,9 +195,45 @@ class BuildAndroidTest(unittest.TestCase):
     def test_slim_recipe_code_compiles(self):
         code = ba.slim_recipe_code(["Core", "Widgets"], ["platforms_qtforandroid"], [])
         compile(code, "recipe", "exec")
-        self.assertIn("recipe = SlimRecipe()", code)
+        self.assertIn("recipe = TrimmedPySideRecipe()", code)
         self.assertIn("'Widgets'", code)
         self.assertIn("Qt6Widgets", code)
+
+    def test_slim_recipe_prunes_unused_qt(self):
+        class PySideRecipe:
+            def build_arch(self, arch):
+                pass
+
+        namespace = {"PySideRecipe": PySideRecipe}
+        exec(ba.slim_recipe_code(["Core", "Widgets"], ["platforms_qtforandroid"], []), namespace)
+        native = [
+            "libQt6Core_arm64-v8a.so", "libQt6Widgets_arm64-v8a.so", "libQt6Network_arm64-v8a.so",
+            "libplugins_platforms_qtforandroid_arm64-v8a.so", "libc++_shared.so",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            libs, site = Path(tmp) / "libs", Path(tmp) / "site"
+            package = site / "PySide6"
+            (package / "Qt" / "lib").mkdir(parents=True)
+            (package / "glue").mkdir()
+            libs.mkdir()
+            for name in native:
+                (libs / name).touch()
+                (package / "Qt" / "lib" / name).touch()
+            bindings = ["QtCore.abi3.so", "QtCore.pyi", "QtNetwork.abi3.so", "QtNetwork.pyi", "QtWidgets.abi3.so"]
+            for name in bindings:
+                (package / name).touch()
+            recipe = namespace["recipe"]
+            recipe.ctx = mock.Mock(
+                get_libs_dir=lambda arch: str(libs), get_python_install_dir=lambda arch: str(site))
+
+            recipe.build_arch(mock.Mock(arch="arm64-v8a"))
+
+            self.assertEqual(
+                sorted(p.name for p in libs.iterdir()),
+                ["libQt6Core_arm64-v8a.so", "libQt6Widgets_arm64-v8a.so",
+                 "libplugins_platforms_qtforandroid_arm64-v8a.so"],
+            )
+            self.assertEqual(sorted(p.name for p in package.iterdir()), ["QtCore.abi3.so", "QtCore.pyi", "QtWidgets.abi3.so"])
 
     def test_apk_name_and_wheel_url(self):
         self.assertEqual(ba.apk_name("1.2.3"), "speedreader_1.2.3_arm64-v8a.apk")
@@ -222,7 +258,7 @@ class BuildAndroidTest(unittest.TestCase):
 
     def test_build_android_rejects_bad_version_before_building(self):
         argv = ["--sdk-path", "sdk", "--ndk-path", "ndk", "--version", "banana"]
-        with mock.patch.object(ba, "stage_sources", side_effect=AssertionError("build started")), \
+        with mock.patch.object(ba, "refresh_staging", side_effect=AssertionError("build started")), \
                 mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
             with self.assertRaises(SystemExit) as caught:
                 ba.main(argv)

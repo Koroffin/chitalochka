@@ -1,11 +1,14 @@
-"""Build the SpeedReader debug APK with pyside6-android-deploy and buildozer.
+"""Builds the debug-signed arm64-v8a APK of SpeedReader.
 
-Linux or macOS only. Needs the Android SDK, NDK r28c and JDK 17+. Run from any
-folder with a Python that has pyside6, buildozer==1.6.0 and cython==0.29.33:
+Run it on Linux or macOS with the Android SDK, NDK r28c and JDK 17 installed,
+using the Python of a venv that has pyside6 (the same version as the Android
+wheels), buildozer==1.6.0 and cython==0.29.33:
 
-    python packaging/build_android.py --sdk-path <sdk> --ndk-path <ndk> --version <pep440>
+    <venv>/bin/python packaging/build_android.py --sdk-path SDK --ndk-path NDK --version 1.2.3
 
-The APK is written to --out (default: out/).
+Intermediate files live in build/android/ (staged sources, Qt wheels, the
+python-for-android checkout); buildozer's cache there is reused by the next
+run. The result is <--out>/speedreader_<version>_arm64-v8a.apk, out/ by default.
 """
 
 import argparse
@@ -17,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -28,11 +32,9 @@ P4A = BUILD / "python-for-android"
 P4A_REPO = "https://github.com/kivy/python-for-android.git"
 ACTIVITY_PATH = Path("pythonforandroid/bootstraps/qt/build/src/main/java/org/kivy/android/PythonActivity.java")
 
-WHEEL_URL = (
-    "https://download.qt.io/official_releases/QtForPython/{package}/"
-    "{package}-{version}-{version}-cp310-abi3-android_{arch}.whl"
-)
+QT_FOR_PYTHON = "https://download.qt.io/official_releases/QtForPython"
 WHEEL_ARCH = "aarch64"
+
 ACTIVITY_ANCHOR = '        Log.v(TAG, "About to do super onCreate");\n'
 ACTIVITY_ENV_LINE = '        setEnvironmentVariable("QT_ANDROID_DISABLE_ACCESSIBILITY", "1");\n'
 
@@ -50,7 +52,8 @@ class PatchError(RuntimeError):
 
 
 def wheel_url(package: str, version: str, arch: str) -> str:
-    return WHEEL_URL.format(package=package, version=version, arch=arch)
+    filename = f"{package}-{version}-{version}-cp310-abi3-android_{arch}.whl"
+    return f"{QT_FOR_PYTHON}/{package}/{filename}"
 
 
 def patch_activity(java: str) -> str:
@@ -134,41 +137,51 @@ def parse_pysidedeploy(text: str) -> tuple[list[str], list[str], list[str]]:
     return modules, plugins, local_libs
 
 
-_SLIM_RECIPE = '''
+_RECIPE_SUBCLASS = """
 
-import shutil
-from pathlib import Path
+import shutil as _shutil
+from pathlib import Path as _Path
 
 
-class SlimRecipe(PySideRecipe):
-    qt_modules = {qt_modules}
-    keep_libs = {keep_libs}
+class TrimmedPySideRecipe(PySideRecipe):
+    used_modules = frozenset(@MODULES@)
+    native_keep = frozenset(@NATIVE@)
 
     def build_arch(self, arch):
         super().build_arch(arch)
-        libs_dir = Path(self.ctx.get_libs_dir(arch.arch))
-        package = Path(self.ctx.get_python_install_dir(arch.arch)) / "PySide6"
-        keep = {{f"lib{{name}}_{{arch.arch}}.so" for name in self.keep_libs}}
-        for lib in (package / "Qt" / "lib").glob("lib*.so"):
-            if lib.name not in keep:
-                (libs_dir / lib.name).unlink(missing_ok=True)
-        for folder in ("Qt", "include", "typesystems", "glue", "scripts"):
-            shutil.rmtree(package / folder, ignore_errors=True)
-        for binding in package.glob("Qt*.abi3.so"):
-            module = binding.name[:-len(".abi3.so")]
-            if module[len("Qt"):] not in self.qt_modules:
-                binding.unlink()
-                (package / f"{{module}}.pyi").unlink(missing_ok=True)
+        site = _Path(self.ctx.get_python_install_dir(arch.arch)) / "PySide6"
+        self.drop_unused_native(_Path(self.ctx.get_libs_dir(arch.arch)), site / "Qt" / "lib", arch.arch)
+        self.drop_unused_python(site)
+
+    def drop_unused_native(self, libs_dir, wheel_libs, abi):
+        wanted = {"lib%s_%s.so" % (stem, abi) for stem in self.native_keep}
+        copied = {lib.name for lib in wheel_libs.glob("lib*.so")}
+        for name in sorted(copied - wanted):
+            target = libs_dir / name
+            if target.exists():
+                target.unlink()
+
+    def drop_unused_python(self, site):
+        for sub in ("Qt", "include", "typesystems", "glue", "scripts"):
+            if (site / sub).is_dir():
+                _shutil.rmtree(site / sub)
+        for path in sorted(site.iterdir()):
+            module, _, suffix = path.name.partition(".")
+            if suffix in ("abi3.so", "pyi") and module.startswith("Qt") and module[2:] not in self.used_modules:
+                path.unlink()
 
 
-recipe = SlimRecipe()
-'''
+recipe = TrimmedPySideRecipe()
+"""
 
 
 def slim_recipe_code(qt_modules: list[str], plugins: list[str], local_libs: list[str]) -> str:
-    """Source appended to the generated PySide6 recipe; it drops Qt parts the app does not use."""
-    keep = {f"Qt6{m}" for m in qt_modules} | {f"plugins_{p}" for p in plugins if p} | {lib for lib in local_libs if lib}
-    return _SLIM_RECIPE.format(qt_modules=repr(list(qt_modules)), keep_libs=repr(sorted(keep)))
+    """Python appended to the generated PySide6 recipe: drops the Qt parts the app does not use."""
+    native = {f"Qt6{module}" for module in qt_modules}
+    native.update(f"plugins_{plugin}" for plugin in plugins if plugin)
+    native.update(lib for lib in local_libs if lib)
+    code = _RECIPE_SUBCLASS.replace("@MODULES@", repr(sorted(qt_modules)))
+    return code.replace("@NATIVE@", repr(sorted(native)))
 
 
 def apk_name(version: str) -> str:
@@ -178,105 +191,100 @@ def apk_name(version: str) -> str:
 log = logging.getLogger("build_android")
 
 
-def _bin(name: str) -> str:
-    return str(Path(sys.executable).parent / name)
+def run(cmd: list, cwd: Path, env: dict[str, str] | None = None) -> None:
+    cmd = [str(part) for part in cmd]
+    log.info("%s$ %s", cwd, " ".join(cmd))
+    subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
-def stage_sources() -> None:
-    STAGING.mkdir(parents=True, exist_ok=True)
-    for item in STAGING.iterdir():
-        if item.name == ".buildozer":
-            continue
-        if item.is_dir() and not item.is_symlink():
-            shutil.rmtree(item)
-        else:
-            item.unlink()
-    shutil.copy2(ROOT / "packaging" / "android" / "main.py", STAGING / "main.py")
+def venv_environment() -> dict[str, str]:
+    scripts = Path(sys.executable).parent
+    env = dict(os.environ, VIRTUAL_ENV=sys.prefix)
+    env["PATH"] = f"{scripts}{os.pathsep}{env.get('PATH', '')}"
+    return env
+
+
+def refresh_staging() -> None:
+    previous = BUILD / "app.previous"
+    shutil.rmtree(previous, ignore_errors=True)
+    if STAGING.exists():
+        STAGING.rename(previous)
+    STAGING.mkdir(parents=True)
+    if (previous / ".buildozer").is_dir():
+        (previous / ".buildozer").rename(STAGING / ".buildozer")
+    shutil.rmtree(previous, ignore_errors=True)
+    shutil.copyfile(ROOT / "packaging" / "android" / "main.py", STAGING / "main.py")
     shutil.copytree(
         ROOT / "speedreader", STAGING / "speedreader",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    log.info("staged sources in %s", STAGING)
 
 
-def download_wheel(package: str, version: str, arch: str) -> Path:
-    url = wheel_url(package, version, arch)
-    path = WHEELS / url.rsplit("/", 1)[-1]
-    if not path.is_file():
-        WHEELS.mkdir(parents=True, exist_ok=True)
-        log.info("downloading %s", url)
-        partial = path.with_name(path.name + ".part")
-        urllib.request.urlretrieve(url, partial)
-        partial.replace(path)
-    return path
+def fetch_wheel(package: str, version: str) -> Path:
+    url = wheel_url(package, version, WHEEL_ARCH)
+    target = WHEELS / Path(urllib.parse.urlsplit(url).path).name
+    if target.is_file():
+        return target
+    WHEELS.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".part")
+    log.info("downloading %s", url)
+    with urllib.request.urlopen(url, timeout=120) as response, partial.open("wb") as sink:
+        shutil.copyfileobj(response, sink, 1 << 20)
+    partial.replace(target)
+    return target
 
 
-def build_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env["VIRTUAL_ENV"] = sys.prefix
-    env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
-    return env
-
-
-def init_deployment(pyside_wheel: Path, shiboken_wheel: Path, sdk: Path, ndk: Path) -> None:
-    subprocess.run(
+def generate_deployment(wheels: dict[str, Path], sdk: Path, ndk: Path, env: dict[str, str]) -> None:
+    run(
         [
-            _bin("pyside6-android-deploy"), "--init", "--force", "--verbose",
-            "--keep-deployment-files", "--no-install", "--name=speedreader",
-            f"--wheel-pyside={pyside_wheel}", f"--wheel-shiboken={shiboken_wheel}",
+            "pyside6-android-deploy", "--init", "--force", "--verbose", "--keep-deployment-files",
+            "--no-install", "--name=speedreader",
+            f"--wheel-pyside={wheels['pyside6']}", f"--wheel-shiboken={wheels['shiboken6']}",
             f"--sdk-path={sdk}", f"--ndk-path={ndk}",
         ],
-        cwd=STAGING, env=build_env(), check=True,
+        STAGING, env,
     )
 
 
-def slim_recipe() -> None:
-    qt_modules, plugins, local_libs = parse_pysidedeploy(
-        (STAGING / "pysidedeploy.spec").read_text(encoding="utf-8"))
+def trim_pyside_recipe() -> None:
+    modules, plugins, local_libs = parse_pysidedeploy((STAGING / "pysidedeploy.spec").read_text(encoding="utf-8"))
+    log.info("keeping Qt modules %s, plugins %s, local libs %s", modules, plugins, local_libs)
     recipe = STAGING / "deployment" / "recipes" / "PySide6" / "__init__.py"
-    with recipe.open("a", encoding="utf-8") as file:
-        file.write(slim_recipe_code(qt_modules, plugins, local_libs))
-    log.info("Qt modules %s, plugins %s, local libs %s", qt_modules, plugins, local_libs)
+    generated = recipe.read_text(encoding="utf-8")
+    recipe.write_text(generated + slim_recipe_code(modules, plugins, local_libs), encoding="utf-8")
 
 
-def prepare_p4a(commit: str) -> Path:
+def checkout_p4a(commit: str, env: dict[str, str]) -> Path:
     if not (P4A / ".git").is_dir():
-        P4A.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init", "-q"], cwd=P4A, check=True)
-        subprocess.run(["git", "remote", "add", "origin", P4A_REPO], cwd=P4A, check=True)
-    subprocess.run(["git", "fetch", "-q", "--depth", "1", "origin", commit], cwd=P4A, check=True)
-    subprocess.run(["git", "checkout", "-q", "--force", "FETCH_HEAD"], cwd=P4A, check=True)
+        shutil.rmtree(P4A, ignore_errors=True)
+        run(["git", "clone", "--quiet", "--depth", "1", "--no-checkout", P4A_REPO, P4A], BUILD, env)
+    run(["git", "fetch", "--quiet", "--depth", "1", "origin", commit], P4A, env)
+    run(["git", "checkout", "--quiet", "--force", "FETCH_HEAD"], P4A, env)
     activity = P4A / ACTIVITY_PATH
     try:
-        patched = patch_activity(activity.read_text(encoding="utf-8"))
+        activity.write_text(patch_activity(activity.read_text(encoding="utf-8")), encoding="utf-8")
     except PatchError as error:
         raise PatchError(f"{activity}: {error}") from error
-    activity.write_text(patched, encoding="utf-8")
-    log.info("python-for-android %s patched in %s", commit, P4A)
     return P4A
 
 
-def write_buildozer_spec(version: str) -> None:
+def configure_buildozer(version: str, env: dict[str, str]) -> None:
     spec = STAGING / "buildozer.spec"
     text = spec.read_text(encoding="utf-8")
     config = _new_config()
     config.read_string(text)
-    p4a_dir = prepare_p4a(config["app"]["p4a.commit"])
-    spec.write_text(edit_buildozer_spec(text, version, str(p4a_dir)), encoding="utf-8")
+    p4a = checkout_p4a(config["app"]["p4a.commit"], env)
+    spec.write_text(edit_buildozer_spec(text, version, str(p4a)), encoding="utf-8")
 
 
-def build_apk(version: str, out: Path) -> Path:
-    subprocess.run(
-        [sys.executable, "-m", "buildozer", "android", "debug"],
-        cwd=STAGING, env=build_env(), check=True,
-    )
-    bin_dir = STAGING / "bin"
-    apks = sorted(bin_dir.glob("*.apk"), key=lambda apk: apk.stat().st_mtime)
-    if not apks:
-        raise FileNotFoundError(f"no APK in {bin_dir}")
+def package_apk(version: str, out: Path, env: dict[str, str]) -> Path:
+    run([sys.executable, "-m", "buildozer", "android", "debug"], STAGING, env)
+    built = sorted((STAGING / "bin").glob("*.apk"))
+    if len(built) != 1:
+        raise RuntimeError(f"expected one APK in {STAGING / 'bin'}, found {[apk.name for apk in built]}")
     out.mkdir(parents=True, exist_ok=True)
     target = out / apk_name(version)
-    shutil.copy2(apks[-1], target)
+    shutil.copyfile(built[0], target)
     return target
 
 
@@ -295,14 +303,13 @@ def main(argv=None) -> int:
 
     import PySide6
 
-    stage_sources()
-    pyside_wheel = download_wheel("pyside6", PySide6.__version__, WHEEL_ARCH)
-    shiboken_wheel = download_wheel("shiboken6", PySide6.__version__, WHEEL_ARCH)
-    init_deployment(pyside_wheel, shiboken_wheel, args.sdk_path.resolve(), args.ndk_path.resolve())
-    slim_recipe()
-    write_buildozer_spec(args.version)
-    apk = build_apk(args.version, args.out.resolve())
-    print(apk)
+    env = venv_environment()
+    refresh_staging()
+    wheels = {package: fetch_wheel(package, PySide6.__version__) for package in ("pyside6", "shiboken6")}
+    generate_deployment(wheels, args.sdk_path.resolve(), args.ndk_path.resolve(), env)
+    trim_pyside_recipe()
+    configure_buildozer(args.version, env)
+    print(package_apk(args.version, args.out.resolve(), env))
     return 0
 
 
