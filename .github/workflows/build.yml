@@ -13,6 +13,8 @@ env:
     libegl1 libxkbcommon0 libxcb-cursor0 libgl1 libdbus-1-3 libfontconfig1
     libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0
     libxcb-render-util0 libxcb-shape0
+  ANDROID_NDK_VERSION: "28.2.13676358"
+  ANDROID_USER_HOME: /home/runner/android-user-home
 
 jobs:
   test:
@@ -98,8 +100,66 @@ jobs:
           path: out/*.deb
           if-no-files-found: error
 
+  build-android:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool libltdl-dev pkg-config zip unzip cmake libffi-dev libssl-dev zlib1g-dev
+      - name: Install Android SDK packages
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;$ANDROID_NDK_VERSION"
+          [ -e "$ANDROID_HOME/tools" ] || ln -s "$ANDROID_HOME/cmdline-tools/latest" "$ANDROID_HOME/tools"
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            line=$(python packaging/set_version.py "$GITHUB_REF_NAME")
+          else
+            line=$(python packaging/set_version.py "0.0.0.dev$GITHUB_RUN_NUMBER")
+          fi
+          echo "$line"
+          for kv in $line; do echo "$kv" >> "$GITHUB_OUTPUT"; done
+      - run: mkdir -p "$ANDROID_USER_HOME" && cp packaging/android/debug.keystore "$ANDROID_USER_HOME/debug.keystore"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            build/android/app/.buildozer
+            build/android/wheels
+          key: android-build-${{ hashFiles('packaging/build_android.py') }}
+      - name: Create build venv
+        run: |
+          python -m venv "$RUNNER_TEMP/android-venv"
+          "$RUNNER_TEMP/android-venv/bin/pip" install "pyside6==6.12.0" "buildozer==1.6.0" "cython==0.29.33"
+          "$RUNNER_TEMP/android-venv/bin/pip" install -r "$("$RUNNER_TEMP/android-venv/bin/python" -c 'import PySide6, pathlib; print(pathlib.Path(PySide6.__file__).parent / "scripts" / "requirements-android.txt")')"
+      - run: >-
+          "$RUNNER_TEMP/android-venv/bin/python" packaging/build_android.py
+          --sdk-path "$ANDROID_HOME" --ndk-path "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          --version "${{ steps.version.outputs.pep440 }}" --out out
+      - name: Smoke check APK
+        run: |
+          badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging out/*.apk)
+          echo "$badging" | grep -q "package: name='io.github.koroffin.speedreader'"
+          echo "$badging" | grep -q "android.permission.INTERNET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speedreader-apk
+          path: out/*.apk
+          if-no-files-found: error
+
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-android]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     steps:
@@ -111,6 +171,9 @@ jobs:
           files: |
             SpeedReader.exe
             *.deb
+            *.apk
           prerelease: ${{ needs.build-linux.outputs.prerelease == 'true' }}
           generate_release_notes: true
-          body: "Windows: при первом запуске нажмите «Подробнее» → «Выполнить в любом случае» (exe не подписан)."
+          body: |
+            Windows: при первом запуске нажмите «Подробнее» → «Выполнить в любом случае» (exe не подписан).
+            Android: APK ставится через «неизвестные источники» и встаёт поверх прошлой версии, библиотека сохраняется.

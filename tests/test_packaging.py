@@ -58,6 +58,17 @@ class PackagingFilesTest(unittest.TestCase):
         self.assertIn("tags:", text)
         self.assertIn("workflow_dispatch", text)
 
+    def test_workflow_builds_android(self):
+        text = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+        self.assertIn("build-android:", text)
+        self.assertIn("runs-on: ubuntu-24.04", text)
+        self.assertIn("ndk;$ANDROID_NDK_VERSION", text)
+        self.assertIn('ANDROID_NDK_VERSION: "28.2.13676358"', text)
+        self.assertIn("packaging/android/debug.keystore", text)
+        self.assertIn("*.apk", text)
+        self.assertIn("needs: [build-windows, build-linux, build-android]", text)
+        self.assertIn("io.github.koroffin.speedreader", text)
+
     def test_desktop_file_has_required_keys(self):
         lines = (ROOT / "packaging" / "speedreader.desktop").read_text(encoding="utf-8").splitlines()
         self.assertEqual(lines[0], "[Desktop Entry]")
