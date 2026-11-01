@@ -1,3 +1,4 @@
+import importlib
 import sys
 
 ES_CONTINUOUS = 0x80000000
@@ -7,6 +8,11 @@ ES_DISPLAY_REQUIRED = 0x00000002
 _SERVICE = "org.freedesktop.ScreenSaver"
 _PATH = "/org/freedesktop/ScreenSaver"
 _CONNECTION = "speedreader-idle"
+
+
+def _qtdbus():
+    # Loaded by name: pyside6-android-deploy scans imports and would require QtDBus in the APK.
+    return importlib.import_module("PySide6.QtDBus")
 
 
 class WindowsBackend:
@@ -24,18 +30,15 @@ class DBusBackend:
     """Inhibits idle sleep through org.freedesktop.ScreenSaver (GNOME, KDE)."""
 
     def acquire(self) -> None:
-        from PySide6.QtDBus import QDBusConnection, QDBusInterface
-
+        dbus = _qtdbus()
         # The inhibit lives on its own connection: closing it releases the
         # inhibit, while UnInhibit needs a uint32 cookie PySide6 cannot send.
-        bus = QDBusConnection.connectToBus(QDBusConnection.BusType.SessionBus, _CONNECTION)
+        bus = dbus.QDBusConnection.connectToBus(dbus.QDBusConnection.BusType.SessionBus, _CONNECTION)
         if bus.isConnected():
-            QDBusInterface(_SERVICE, _PATH, _SERVICE, bus).call("Inhibit", "SpeedReader", "Чтение")
+            dbus.QDBusInterface(_SERVICE, _PATH, _SERVICE, bus).call("Inhibit", "SpeedReader", "Чтение")
 
     def release(self) -> None:
-        from PySide6.QtDBus import QDBusConnection
-
-        QDBusConnection.disconnectFromBus(_CONNECTION)
+        _qtdbus().QDBusConnection.disconnectFromBus(_CONNECTION)
 
 
 class NullBackend:

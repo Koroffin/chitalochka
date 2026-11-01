@@ -11,6 +11,23 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 
+
+def _deploy_scanner():
+    try:
+        import PySide6
+    except ImportError:
+        return None
+    # pyside6-deploy imports its siblings (project_lib) as top-level modules.
+    sys.path.append(str(Path(PySide6.__file__).parent / "scripts"))
+    try:
+        from deploy_lib.dependency_util import find_pyside_modules
+    except ImportError:
+        return None
+    return find_pyside_modules
+
+
+find_pyside_modules = _deploy_scanner()
+
 _spec = importlib.util.spec_from_file_location("build_android", ROOT / "packaging" / "build_android.py")
 ba = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ba)
@@ -98,6 +115,12 @@ ACTIVITY = """public class PythonActivity extends QtActivity {
     }
 }
 """
+
+
+class DeployScanTest(unittest.TestCase):
+    @unittest.skipUnless(find_pyside_modules, "pyside6 deploy tools not installed")
+    def test_deploy_scan_finds_only_the_bundled_modules(self):
+        self.assertEqual(set(find_pyside_modules(ROOT / "speedreader")), {"Core", "Gui", "Widgets"})
 
 
 class BuildAndroidTest(unittest.TestCase):
