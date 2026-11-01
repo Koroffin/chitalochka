@@ -16,6 +16,18 @@ from speedreader.sources import detect
 _KEY_ROLE = Qt.UserRole
 _AVAILABLE_ROLE = Qt.UserRole + 1
 
+EMPTY_TEXT = "Библиотека пуста. Нажмите «Добавить»."
+
+
+def row_text(store: LibraryStore, entry: dict) -> tuple[str, bool]:
+    prefix = f"{entry['title']} — {entry['author']}"
+    if not store.is_available(entry["key"]):
+        return f"{prefix} — файл книги не найден", False
+    flat = entry["position"].get("flat", 0)
+    count = entry["word_count"]
+    percent = min(round(100 * flat / count), 100) if count else 0
+    return f"{prefix} — {percent} %", True
+
 
 class LibraryPage(QWidget):
     open_requested = Signal(str, bool)
@@ -30,7 +42,7 @@ class LibraryPage(QWidget):
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._update_buttons)
         self.list.itemDoubleClicked.connect(lambda _item: self.continue_button.click())
-        self.empty_label = QLabel("Библиотека пуста. Нажмите «Добавить».")
+        self.empty_label = QLabel(EMPTY_TEXT)
         self.empty_label.setAlignment(Qt.AlignCenter)
         self.continue_button = QPushButton("Продолжить")
         self.continue_button.clicked.connect(self._continue)
@@ -61,13 +73,7 @@ class LibraryPage(QWidget):
         self.refresh()
 
     def _row_text(self, entry: dict) -> tuple[str, bool]:
-        prefix = f"{entry['title']} — {entry['author']}"
-        if not self.store.is_available(entry["key"]):
-            return f"{prefix} — файл книги не найден", False
-        flat = entry["position"].get("flat", 0)
-        count = entry["word_count"]
-        percent = min(round(100 * flat / count), 100) if count else 0
-        return f"{prefix} — {percent} %", True
+        return row_text(self.store, entry)
 
     def refresh(self) -> None:
         selected = self.current_key()
