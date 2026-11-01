@@ -32,6 +32,7 @@ WHEEL_URL = (
     "https://download.qt.io/official_releases/QtForPython/{package}/"
     "{package}-{version}-{version}-cp310-abi3-android_{arch}.whl"
 )
+WHEEL_ARCH = "aarch64"
 ACTIVITY_ANCHOR = '        Log.v(TAG, "About to do super onCreate");\n'
 ACTIVITY_ENV_LINE = '        setEnvironmentVariable("QT_ANDROID_DISABLE_ACCESSIBILITY", "1");\n'
 
@@ -269,9 +270,10 @@ def build_apk(version: str, out: Path) -> Path:
         [sys.executable, "-m", "buildozer", "android", "debug"],
         cwd=STAGING, env=build_env(), check=True,
     )
-    apks = sorted(STAGING.rglob("*.apk"), key=lambda apk: apk.stat().st_mtime)
+    bin_dir = STAGING / "bin"
+    apks = sorted(bin_dir.glob("*.apk"), key=lambda apk: apk.stat().st_mtime)
     if not apks:
-        raise FileNotFoundError(f"no APK under {STAGING}")
+        raise FileNotFoundError(f"no APK in {bin_dir}")
     out.mkdir(parents=True, exist_ok=True)
     target = out / apk_name(version)
     shutil.copy2(apks[-1], target)
@@ -284,15 +286,18 @@ def main(argv=None) -> int:
     parser.add_argument("--ndk-path", type=Path, required=True, help="Android NDK r28c folder")
     parser.add_argument("--version", required=True, help="PEP 440 version, as set_version.py prints it")
     parser.add_argument("--out", type=Path, default=ROOT / "out", help="folder for the APK (default: out/)")
-    parser.add_argument("--arch", choices=["aarch64", "x86_64"], default="aarch64")
     args = parser.parse_args(argv)
+    try:
+        numeric_version(args.version)
+    except ValueError as error:
+        parser.error(str(error))
     logging.basicConfig(level=logging.INFO)
 
     import PySide6
 
     stage_sources()
-    pyside_wheel = download_wheel("pyside6", PySide6.__version__, args.arch)
-    shiboken_wheel = download_wheel("shiboken6", PySide6.__version__, args.arch)
+    pyside_wheel = download_wheel("pyside6", PySide6.__version__, WHEEL_ARCH)
+    shiboken_wheel = download_wheel("shiboken6", PySide6.__version__, WHEEL_ARCH)
     init_deployment(pyside_wheel, shiboken_wheel, args.sdk_path.resolve(), args.ndk_path.resolve())
     slim_recipe()
     write_buildozer_spec(args.version)

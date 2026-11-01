@@ -1,11 +1,13 @@
 import configparser
 import importlib.util
+import io
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -180,5 +182,15 @@ class BuildAndroidTest(unittest.TestCase):
             capture_output=True, text=True, cwd=ROOT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        for flag in ("--sdk-path", "--ndk-path", "--version", "--out", "--arch"):
+        for flag in ("--sdk-path", "--ndk-path", "--version", "--out"):
             self.assertIn(flag, result.stdout)
+        self.assertNotIn("--arch", result.stdout)
+
+    def test_build_android_rejects_bad_version_before_building(self):
+        argv = ["--sdk-path", "sdk", "--ndk-path", "ndk", "--version", "banana"]
+        with mock.patch.object(ba, "stage_sources", side_effect=AssertionError("build started")), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            with self.assertRaises(SystemExit) as caught:
+                ba.main(argv)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("banana", stderr.getvalue())
