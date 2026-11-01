@@ -85,6 +85,8 @@ class PackagingFilesTest(unittest.TestCase):
         self.assertIn("*.apk", text)
         self.assertIn("needs: [build-windows, build-linux, build-android]", text)
         self.assertIn("io.github.koroffin.speedreader", text)
+        self.assertIn("apksigner\" verify --print-certs out/*.apk", text)
+        self.assertIn("DEBUG_CERT_SHA256: e88b05bc425cc06cf405a11a2d7ec3b03b375a9474a93f7b7dea1925e085f9c4", text)
 
     def test_desktop_file_has_required_keys(self):
         lines = (ROOT / "packaging" / "speedreader.desktop").read_text(encoding="utf-8").splitlines()
