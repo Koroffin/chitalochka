@@ -103,6 +103,7 @@ class AddPageTest(unittest.TestCase):
         self.assertTrue(page.import_button.isHidden())
         self.assertTrue(page.pdf_button.isHidden())
         self.assertFalse(page.download_button.isHidden())
+        self.assertGreaterEqual(page.url_edit.minimumHeight(), 48)
 
     def test_unknown_url_shows_error_without_thread(self):
         self.page.url_edit.setText("https://example.com")

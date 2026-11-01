@@ -11,9 +11,10 @@ from unittest import mock
 from PySide6.QtCore import QEvent, QPoint, Qt, qInstallMessageHandler
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
 
-from speedreader.library import LibraryStore
+from speedreader.library import LibraryError, LibraryStore
+
 from speedreader.mobile import (
     LONG_PRESS_MS,
     MobileLibraryPage,
@@ -153,6 +154,17 @@ class MobileLibraryTest(StoreCase):
         self.assertIn("Первая", shown[0])
         QTest.mouseRelease(self.page.list.viewport(), Qt.LeftButton, pos=rect.center())
         self.assertEqual(received, [])
+
+    def test_menu_items_are_touch_sized(self):
+        styles = []
+
+        class ClosedMenu(QMenu):
+            def exec(self, *args):
+                styles.append(self.styleSheet())
+
+        with mock.patch("speedreader.mobile.QMenu", ClosedMenu):
+            self.page.show_menu(self.item("Первая"), QPoint())
+        self.assertEqual(styles, ["QMenu::item { min-height: 48px; }"])
 
     def test_long_press_cancelled_by_move(self):
         self.page.show()
@@ -307,6 +319,14 @@ class MobileWindowTest(StoreCase):
         QApplication.instance().applicationStateChanged.emit(Qt.ApplicationInactive)
         self.assertFalse(self.window.reader_page.playing)
 
+    def test_background_on_library_keeps_store(self):
+        self.window.open_book("k", False)
+        self.window.reader_page.model.set_position(1, 0)
+        self.window.back_from_reader()
+        with mock.patch.object(self.store, "set_position") as set_position:
+            QApplication.instance().applicationStateChanged.emit(Qt.ApplicationInactive)
+        set_position.assert_not_called()
+
     def test_back_after_book_removed_does_not_raise(self):
         self.window.open_book("k", False)
         self.store.remove("k")
@@ -339,6 +359,22 @@ class EnvironmentTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
+    def run_main_with_unknown_argv(self, android: bool) -> int:
+        with mock.patch("speedreader.mobile.is_android", return_value=android), \
+                mock.patch.object(sys, "argv", ["speedreader", "--from-bootstrap"]), \
+                mock.patch("speedreader.mobile.prepare_environment"), \
+                mock.patch("speedreader.mobile.LibraryStore", side_effect=LibraryError("stop")), \
+                mock.patch.object(QMessageBox, "critical"), \
+                mock.patch("sys.stderr"):
+            return main()
+
+    def test_android_ignores_process_arguments(self):
+        self.assertEqual(self.run_main_with_unknown_argv(android=True), 1)
+
+    def test_desktop_rejects_unknown_arguments(self):
+        with self.assertRaises(SystemExit):
+            self.run_main_with_unknown_argv(android=False)
+
     def test_smoke_runs_and_exits(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(main(["--smoke", "--data-dir", tmp]), 0)

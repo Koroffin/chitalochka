@@ -101,6 +101,7 @@ class AddPage(QWidget):
                 self.back_button,
             ):
                 button.setMinimumHeight(_MOBILE_MIN_HEIGHT)
+            self.url_edit.setMinimumHeight(_MOBILE_MIN_HEIGHT)
 
         buttons = QHBoxLayout()
         for button in (self.download_button, self.import_button, self.pdf_button):
