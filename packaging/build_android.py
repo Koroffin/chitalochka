@@ -121,6 +121,10 @@ def edit_buildozer_spec(text: str, version: str, p4a_dir: str) -> str:
         "source.exclude_dirs": "deployment,bin,.buildozer",
         "p4a.source_dir": p4a_dir,
     })
+    if not config.has_section("buildozer"):
+        config.add_section("buildozer")
+    # pyside6-android-deploy sets an absolute bin_dir (the staging root); package_apk reads STAGING/bin.
+    config["buildozer"]["bin_dir"] = "bin"
     out = io.StringIO()
     config.write(out)
     return out.getvalue()

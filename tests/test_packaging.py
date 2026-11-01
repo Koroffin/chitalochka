@@ -174,6 +174,16 @@ class BuildAndroidTest(unittest.TestCase):
         self.assertEqual(app["p4a.commit"], "abc")
         self.assertEqual(cfg["buildozer"]["log_level"], "2")
 
+    def test_bin_dir_points_at_staging_bin(self):
+        out = ba.edit_buildozer_spec(
+            "[app]\nrequirements = python3\n\n[buildozer]\nbin_dir = /abs/app\nlog_level = 2\n", "1.0.0", "/p")
+        cfg = configparser.ConfigParser(interpolation=None)
+        cfg.read_string(out)
+        self.assertEqual(dict(cfg["buildozer"]), {"bin_dir": "bin", "log_level": "2"})
+        cfg = configparser.ConfigParser(interpolation=None)
+        cfg.read_string(ba.edit_buildozer_spec("[app]\nrequirements = python3\n", "1.0.0", "/p"))
+        self.assertEqual(dict(cfg["buildozer"]), {"bin_dir": "bin"})
+
     def test_requirements_not_duplicated(self):
         out = ba.edit_buildozer_spec("[app]\nrequirements = python3,certifi\n", "1.0.0", "/p")
         self.assertIn("requirements = python3,certifi\n", out)
