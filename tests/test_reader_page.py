@@ -122,6 +122,27 @@ class ReaderPageTest(unittest.TestCase):
         ticker.set_words("", "Глава", "", bold=(False, True, False))
         self.assertGreater(highlight_width(ticker), regular)
 
+    def test_short_group_keeps_28pt(self):
+        ticker = TickerView()
+        ticker.resize(900, 200)
+        self.addCleanup(ticker.deleteLater)
+        ticker.set_words("", "Глава", "")
+        self.assertEqual(ticker.fitted_point_size(), 28)
+
+    def test_long_group_shrinks_font(self):
+        ticker = TickerView()
+        ticker.resize(360, 200)
+        self.addCleanup(ticker.deleteLater)
+        ticker.set_words("", "достопримечательностями,", "")
+        size = ticker.fitted_point_size()
+        self.assertLess(size, 28)
+        self.assertGreaterEqual(size, 14)
+        self.assertEqual(size % 2, 0)
+        wide = highlight_width(ticker)
+        ticker.resize(900, 200)
+        self.assertEqual(ticker.fitted_point_size(), 28)
+        self.assertGreater(highlight_width(ticker), wide)
+
     def test_playback_keeps_computer_awake(self):
         self.page.show()
         self.page.play()

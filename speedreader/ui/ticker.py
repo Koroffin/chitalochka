@@ -6,6 +6,10 @@ HIGHLIGHT = QColor("#ffe58a")
 DIM_OPACITY = 0.4
 _GAP = 40
 _PAD = 10
+_MAX_PT = 28
+_MIN_PT = 14
+_PT_STEP = 2
+_FIT = 0.9
 
 
 class TickerView(QWidget):
@@ -23,7 +27,7 @@ class TickerView(QWidget):
         font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
         font.setFamily("Serif")
         font.setStyleHint(QFont.Serif)
-        font.setPointSize(28)
+        font.setPointSize(_MAX_PT)
         self.setFont(font)
         self.setMinimumHeight(QFontMetricsF(font).height() * 3)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -40,9 +44,21 @@ class TickerView(QWidget):
         self.bold = bold
         self.update()
 
+    def fitted_point_size(self) -> int:
+        if not self.current:
+            return _MAX_PT
+        font = QFont(self.font())
+        font.setBold(self.bold[1])
+        for size in range(_MAX_PT, _MIN_PT, -_PT_STEP):
+            font.setPointSize(size)
+            if QFontMetricsF(font).horizontalAdvance(self.current) <= _FIT * self.width():
+                return size
+        return _MIN_PT
+
     def _font(self, bold: bool) -> QFont:
         font = QFont(self.font())
         font.setBold(bold)
+        font.setPointSize(self.fitted_point_size())
         return font
 
     def mousePressEvent(self, event) -> None:
