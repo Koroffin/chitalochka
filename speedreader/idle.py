@@ -46,7 +46,13 @@ class NullBackend:
         pass
 
 
+def is_android() -> bool:
+    return hasattr(sys, "getandroidapilevel")
+
+
 def platform_backend():
+    if is_android():
+        return NullBackend()
     if sys.platform == "win32":
         import ctypes
 

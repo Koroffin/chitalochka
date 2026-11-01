@@ -1,4 +1,6 @@
+import sys
 import unittest
+from unittest import mock
 
 from speedreader.idle import (
     ES_CONTINUOUS,
@@ -6,7 +8,10 @@ from speedreader.idle import (
     ES_SYSTEM_REQUIRED,
     DBusBackend,
     IdleInhibitor,
+    NullBackend,
     WindowsBackend,
+    is_android,
+    platform_backend,
 )
 
 
@@ -63,6 +68,15 @@ class IdleInhibitorTests(unittest.TestCase):
         backend.release()
         backend.acquire()
         backend.release()
+
+    def test_is_android_follows_sys_attribute(self):
+        with mock.patch.object(sys, "getandroidapilevel", create=True, new=lambda: 35):
+            self.assertTrue(is_android())
+        self.assertFalse(is_android())
+
+    def test_platform_backend_is_null_on_android(self):
+        with mock.patch.object(sys, "getandroidapilevel", create=True, new=lambda: 35):
+            self.assertIsInstance(platform_backend(), NullBackend)
 
 
 if __name__ == "__main__":
