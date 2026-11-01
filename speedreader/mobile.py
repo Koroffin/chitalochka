@@ -1,4 +1,5 @@
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from speedreader.library import LibraryError, LibraryStore
+from speedreader.reading import ReadingModel, Word
 from speedreader.sources import detect
 from speedreader.ui.library_page import (
     _AVAILABLE_ROLE,
@@ -19,11 +21,14 @@ from speedreader.ui.library_page import (
     EMPTY_TEXT,
     row_text,
 )
+from speedreader.ui.reader_page import _PARAGRAPH_MARK
+from speedreader.ui.ticker import TickerView
 
 ANDROID_WPM = 200
 MIN_TOUCH_PX = 48
 LONG_PRESS_MS = 500
 DRAG_CANCEL_PX = 20
+PROGRESS_COLOR = QColor("#c9a227")
 
 
 class MobileLibraryPage(QWidget):
@@ -143,3 +148,126 @@ class MobileLibraryPage(QWidget):
 
     def _warn(self, message: str) -> None:
         QMessageBox.warning(self, "SpeedReader", f"Ошибка хранилища: {message}")
+
+
+class ProgressStrip(QWidget):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.fraction = 0.0
+        self.setFixedHeight(4)
+
+    def set_fraction(self, value: float) -> None:
+        self.fraction = value
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.palette().mid())
+        painter.fillRect(QRectF(0, 0, self.fraction * self.width(), self.height()), PROGRESS_COLOR)
+
+
+class MobileReaderPage(QWidget):
+    back_requested = Signal()
+
+    def __init__(self, store: LibraryStore, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.store = store
+        self.key: str | None = None
+        self.book: dict = {"blocks": []}
+        self.model = ReadingModel(self.book)
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._tick)
+
+        self.strip = ProgressStrip()
+        self.ticker = TickerView()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.strip)
+        layout.addWidget(self.ticker, 1)
+        self.refresh()
+
+    @property
+    def playing(self) -> bool:
+        return self._timer.isActive()
+
+    def load(self, key: str, book: dict, restart: bool = False) -> None:
+        # The previous book is saved on hide; saving here would undo a restart's reset.
+        self.pause(save=False)
+        self.key = key
+        self.book = book
+        self.model = ReadingModel(book)
+        if not restart:
+            pos = self.store.find(key)["position"]
+            self.model.set_position(pos["block"], pos["word"])
+        self.refresh()
+
+    def refresh(self) -> None:
+        words = self.model.words
+        pos = self.model.pos
+        self.strip.set_fraction(self.model.progress)
+        if not words:
+            self.ticker.set_words("", "", "")
+            return
+        slots = [
+            self._slot(words[pos - 1]) if pos > 0 else ("", False),
+            self._slot(words[pos]),
+            self._slot(words[pos + 1]) if pos + 1 < len(words) else ("", False),
+        ]
+        self.ticker.set_words(*(text for text, _ in slots), bold=tuple(b for _, b in slots))
+
+    def _slot(self, word: Word) -> tuple[str, bool]:
+        block = self.book["blocks"][word.block]
+        text = word.text
+        if word.last_in_block and word.block + 1 < len(self.book["blocks"]):
+            text += _PARAGRAPH_MARK
+        return text, block.get("type") == "heading"
+
+    def current_delay_ms(self) -> int:
+        return round(self.model.delay(ANDROID_WPM) * 1000)
+
+    def play(self) -> None:
+        if self.playing or self.model.pos + 1 >= self.model.word_count:
+            return
+        self._timer.start(self.current_delay_ms())
+        self.refresh()
+
+    def pause(self, save: bool = True) -> None:
+        self._timer.stop()
+        self.refresh()
+        if save:
+            self.save_position()
+
+    def toggle(self) -> None:
+        if self.playing:
+            self.pause()
+        else:
+            self.play()
+
+    def rewind(self) -> None:
+        self.model.prev_sentence()
+        self.refresh()
+        if self.playing:
+            self._timer.start(self.current_delay_ms())
+        else:
+            self.save_position()
+
+    def _tick(self) -> None:
+        if not self.model.advance():
+            self.pause()
+            return
+        self._timer.start(self.current_delay_ms())
+        self.refresh()
+
+    def save_position(self) -> None:
+        if self.store.find(self.key) is None or self.model.current is None:
+            return
+        try:
+            self.store.set_position(self.key, *self.model.position, self.model.pos)
+        except LibraryError as e:
+            QMessageBox.warning(self, "SpeedReader", f"Ошибка хранилища: {e}")
+
+    def hideEvent(self, event) -> None:
+        self.pause()
+        super().hideEvent(event)

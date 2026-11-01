@@ -13,7 +13,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from speedreader.library import LibraryStore
-from speedreader.mobile import LONG_PRESS_MS, MobileLibraryPage
+from speedreader.mobile import LONG_PRESS_MS, MobileLibraryPage, MobileReaderPage
+from speedreader.reading import delay_for
 
 _app = None
 
@@ -160,3 +161,47 @@ class MobileLibraryTest(StoreCase):
         QTest.mousePress(self.page.list.viewport(), Qt.LeftButton, pos=rect.center())
         QTest.mouseRelease(self.page.list.viewport(), Qt.LeftButton, pos=rect.center())
         self.assertFalse(self.page.long_press_timer.isActive())
+
+
+class MobileReaderTest(StoreCase):
+    def setUp(self):
+        super().setUp()
+        self.page = MobileReaderPage(self.store)
+        self.page.resize(400, 700)
+        self.addCleanup(self.page.deleteLater)
+        self.book = self.store.load_book("k")
+        self.page.load("k", self.book)
+
+    def test_delay_is_200_wpm_regardless_of_store(self):
+        self.store.wpm = 900
+        m = self.page.model
+        expected = round(delay_for(m.current, 200, m.weights(200)[m.pos]) * 1000)
+        self.assertEqual(self.page.current_delay_ms(), expected)
+        self.assertEqual(self.store.wpm, 900)
+
+    def test_progress_strip_follows_position(self):
+        self.assertEqual(self.page.strip.height(), 4)
+        self.assertEqual(self.page.strip.fraction, 0.0)
+        self.page.model.set_position(1, 0)
+        self.page.refresh()
+        self.assertAlmostEqual(self.page.strip.fraction, self.page.model.progress)
+
+    def test_ticker_shows_words_with_paragraph_mark(self):
+        self.page.model.set_position(0, 2)
+        self.page.refresh()
+        self.assertEqual(self.page.ticker.current, "три. ¶")
+
+    def test_play_pause_saves_position(self):
+        self.page.play()
+        self.assertTrue(self.page.playing)
+        QTest.qWait(50)
+        self.page.pause()
+        self.assertFalse(self.page.playing)
+        pos = self.store.find("k")["position"]
+        self.assertEqual(pos["flat"], self.page.model.pos)
+
+    def test_rewind_while_paused_saves(self):
+        self.page.model.set_position(1, 2)
+        self.page.rewind()
+        self.assertEqual(self.page.model.position, (1, 0))
+        self.assertEqual(self.store.find("k")["position"]["flat"], 3)
