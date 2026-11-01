@@ -173,3 +173,12 @@ class BuildAndroidTest(unittest.TestCase):
 
     def test_debug_keystore_present(self):
         self.assertGreater((ROOT / "packaging" / "android" / "debug.keystore").stat().st_size, 1000)
+
+    def test_build_android_help(self):
+        result = subprocess.run(
+            [sys.executable, "packaging/build_android.py", "--help"],
+            capture_output=True, text=True, cwd=ROOT,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for flag in ("--sdk-path", "--ndk-path", "--version", "--out", "--arch"):
+            self.assertIn(flag, result.stdout)

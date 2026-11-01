@@ -8,9 +8,25 @@ folder with a Python that has pyside6, buildozer==1.6.0 and cython==0.29.33:
 The APK is written to --out (default: out/).
 """
 
+import argparse
 import configparser
 import io
+import logging
+import os
 import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BUILD = ROOT / "build" / "android"
+STAGING = BUILD / "app"
+WHEELS = BUILD / "wheels"
+P4A = BUILD / "python-for-android"
+P4A_REPO = "https://github.com/kivy/python-for-android.git"
+ACTIVITY_PATH = Path("pythonforandroid/bootstraps/qt/build/src/main/java/org/kivy/android/PythonActivity.java")
 
 WHEEL_URL = (
     "https://download.qt.io/official_releases/QtForPython/{package}/"
@@ -158,8 +174,131 @@ def apk_name(version: str) -> str:
     return f"speedreader_{version}_arm64-v8a.apk"
 
 
+log = logging.getLogger("build_android")
+
+
+def _bin(name: str) -> str:
+    return str(Path(sys.executable).parent / name)
+
+
+def stage_sources() -> None:
+    STAGING.mkdir(parents=True, exist_ok=True)
+    for item in STAGING.iterdir():
+        if item.name == ".buildozer":
+            continue
+        if item.is_dir() and not item.is_symlink():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+    shutil.copy2(ROOT / "packaging" / "android" / "main.py", STAGING / "main.py")
+    shutil.copytree(
+        ROOT / "speedreader", STAGING / "speedreader",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    log.info("staged sources in %s", STAGING)
+
+
+def download_wheel(package: str, version: str, arch: str) -> Path:
+    url = wheel_url(package, version, arch)
+    path = WHEELS / url.rsplit("/", 1)[-1]
+    if not path.is_file():
+        WHEELS.mkdir(parents=True, exist_ok=True)
+        log.info("downloading %s", url)
+        partial = path.with_name(path.name + ".part")
+        urllib.request.urlretrieve(url, partial)
+        partial.replace(path)
+    return path
+
+
+def build_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = sys.prefix
+    env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+    return env
+
+
+def init_deployment(pyside_wheel: Path, shiboken_wheel: Path, sdk: Path, ndk: Path) -> None:
+    subprocess.run(
+        [
+            _bin("pyside6-android-deploy"), "--init", "--force", "--verbose",
+            "--keep-deployment-files", "--no-install", "--name=speedreader",
+            f"--wheel-pyside={pyside_wheel}", f"--wheel-shiboken={shiboken_wheel}",
+            f"--sdk-path={sdk}", f"--ndk-path={ndk}",
+        ],
+        cwd=STAGING, env=build_env(), check=True,
+    )
+
+
+def slim_recipe() -> None:
+    qt_modules, plugins, local_libs = parse_pysidedeploy(
+        (STAGING / "pysidedeploy.spec").read_text(encoding="utf-8"))
+    recipe = STAGING / "deployment" / "recipes" / "PySide6" / "__init__.py"
+    with recipe.open("a", encoding="utf-8") as file:
+        file.write(slim_recipe_code(qt_modules, plugins, local_libs))
+    log.info("Qt modules %s, plugins %s, local libs %s", qt_modules, plugins, local_libs)
+
+
+def prepare_p4a(commit: str) -> Path:
+    if not (P4A / ".git").is_dir():
+        P4A.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q"], cwd=P4A, check=True)
+        subprocess.run(["git", "remote", "add", "origin", P4A_REPO], cwd=P4A, check=True)
+    subprocess.run(["git", "fetch", "-q", "--depth", "1", "origin", commit], cwd=P4A, check=True)
+    subprocess.run(["git", "checkout", "-q", "--force", "FETCH_HEAD"], cwd=P4A, check=True)
+    activity = P4A / ACTIVITY_PATH
+    try:
+        patched = patch_activity(activity.read_text(encoding="utf-8"))
+    except PatchError as error:
+        raise PatchError(f"{activity}: {error}") from error
+    activity.write_text(patched, encoding="utf-8")
+    log.info("python-for-android %s patched in %s", commit, P4A)
+    return P4A
+
+
+def write_buildozer_spec(version: str) -> None:
+    spec = STAGING / "buildozer.spec"
+    text = spec.read_text(encoding="utf-8")
+    config = _new_config()
+    config.read_string(text)
+    p4a_dir = prepare_p4a(config["app"]["p4a.commit"])
+    spec.write_text(edit_buildozer_spec(text, version, str(p4a_dir)), encoding="utf-8")
+
+
+def build_apk(version: str, out: Path) -> Path:
+    subprocess.run(
+        [sys.executable, "-m", "buildozer", "android", "debug"],
+        cwd=STAGING, env=build_env(), check=True,
+    )
+    apks = sorted(STAGING.rglob("*.apk"), key=lambda apk: apk.stat().st_mtime)
+    if not apks:
+        raise FileNotFoundError(f"no APK under {STAGING}")
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / apk_name(version)
+    shutil.copy2(apks[-1], target)
+    return target
+
+
 def main(argv=None) -> int:
-    pass
+    parser = argparse.ArgumentParser(description="Build the SpeedReader debug APK.")
+    parser.add_argument("--sdk-path", type=Path, required=True, help="Android SDK folder")
+    parser.add_argument("--ndk-path", type=Path, required=True, help="Android NDK r28c folder")
+    parser.add_argument("--version", required=True, help="PEP 440 version, as set_version.py prints it")
+    parser.add_argument("--out", type=Path, default=ROOT / "out", help="folder for the APK (default: out/)")
+    parser.add_argument("--arch", choices=["aarch64", "x86_64"], default="aarch64")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO)
+
+    import PySide6
+
+    stage_sources()
+    pyside_wheel = download_wheel("pyside6", PySide6.__version__, args.arch)
+    shiboken_wheel = download_wheel("shiboken6", PySide6.__version__, args.arch)
+    init_deployment(pyside_wheel, shiboken_wheel, args.sdk_path.resolve(), args.ndk_path.resolve())
+    slim_recipe()
+    write_buildozer_spec(args.version)
+    apk = build_apk(args.version, args.out.resolve())
+    print(apk)
+    return 0
 
 
 if __name__ == "__main__":
