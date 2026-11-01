@@ -130,6 +130,8 @@ class MobileLibraryTest(StoreCase):
     def test_long_press_opens_menu(self):
         self.page.show()
         shown = []
+        received = []
+        self.page.open_requested.connect(lambda k, r: received.append((k, r)))
         with mock.patch.object(
             self.page, "show_menu", side_effect=lambda item, pos: shown.append(item.text())
         ):
@@ -140,6 +142,7 @@ class MobileLibraryTest(StoreCase):
         self.assertEqual(len(shown), 1)
         self.assertIn("Первая", shown[0])
         QTest.mouseRelease(self.page.list.viewport(), Qt.LeftButton, pos=rect.center())
+        self.assertEqual(received, [])
 
     def test_long_press_cancelled_by_move(self):
         self.page.show()
