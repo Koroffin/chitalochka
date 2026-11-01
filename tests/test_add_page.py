@@ -97,6 +97,13 @@ class AddPageTest(unittest.TestCase):
         self.page.url_edit.setText(URL)
         return source
 
+    def test_mobile_hides_import_and_pdf(self):
+        page = AddPage(self.store, mobile=True)
+        self.addCleanup(page.deleteLater)
+        self.assertTrue(page.import_button.isHidden())
+        self.assertTrue(page.pdf_button.isHidden())
+        self.assertFalse(page.download_button.isHidden())
+
     def test_unknown_url_shows_error_without_thread(self):
         self.page.url_edit.setText("https://example.com")
         self.page.start_download()

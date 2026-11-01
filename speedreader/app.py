@@ -121,7 +121,10 @@ def main(argv: list[str] | None = None) -> int:
     window.show()
     if args.smoke:
         QTimer.singleShot(0, app.quit)
-    code = app.exec()
+    return exit_code(app.exec())
+
+
+def exit_code(code: int) -> int:
     if any(worker.isRunning() for worker in list(add_page_module._orphaned_workers)):
         # A running QThread destroyed at interpreter teardown aborts the process.
         sys.stdout.flush()

@@ -1,6 +1,13 @@
+import argparse
+import os
+import sys
+from collections.abc import Callable, MutableMapping
+from pathlib import Path
+
 from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -8,13 +15,17 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from speedreader.app import default_data_dir, exit_code
+from speedreader.idle import is_android
 from speedreader.library import LibraryError, LibraryStore
 from speedreader.reading import ReadingModel, Word
 from speedreader.sources import detect
+from speedreader.ui.add_page import AddPage
 from speedreader.ui.library_page import (
     _AVAILABLE_ROLE,
     _KEY_ROLE,
@@ -86,6 +97,13 @@ class MobileLibraryPage(QWidget):
 
     def key_at(self, item: QListWidgetItem) -> str:
         return item.data(_KEY_ROLE)
+
+    def item_text(self, key: str) -> str:
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if self.key_at(item) == key:
+                return item.text()
+        raise KeyError(key)
 
     def _open(self, item: QListWidgetItem) -> None:
         # The release that ends a long press must not also open the book.
@@ -175,8 +193,6 @@ class ProgressStrip(QWidget):
 
 
 class MobileReaderPage(QWidget):
-    back_requested = Signal()
-
     def __init__(self, store: LibraryStore, parent: QWidget | None = None):
         super().__init__(parent)
         self.store = store
@@ -296,3 +312,103 @@ class MobileReaderPage(QWidget):
     def hideEvent(self, event) -> None:
         self.pause()
         super().hideEvent(event)
+
+
+class MobileWindow(QStackedWidget):
+    def __init__(self, store: LibraryStore):
+        super().__init__()
+        self.store = store
+        self.setWindowTitle("SpeedReader")
+        self.library_page = MobileLibraryPage(store)
+        self.add_page = AddPage(store, mobile=True)
+        self.reader_page = MobileReaderPage(store)
+        for page in (self.library_page, self.add_page, self.reader_page):
+            self.addWidget(page)
+
+        self.library_page.open_requested.connect(self.open_book)
+        self.library_page.add_requested.connect(self._show_add)
+        self.library_page.redownload_requested.connect(self._redownload)
+        self.add_page.book_ready.connect(lambda key: self.open_book(key, False))
+        self.add_page.back_requested.connect(self.show_library)
+        QGuiApplication.instance().applicationStateChanged.connect(self._on_app_state)
+        self.show_library()
+
+    def show_library(self) -> None:
+        self.library_page.refresh()
+        self.setCurrentWidget(self.library_page)
+
+    def open_book(self, key: str, restart: bool) -> None:
+        try:
+            book = self.store.load_book(key)
+            self.reader_page.load(key, book, restart)
+        except LibraryError as e:
+            QMessageBox.warning(self, "SpeedReader", f"Ошибка хранилища: {e}")
+            self.show_library()
+            return
+        self.setCurrentWidget(self.reader_page)
+        self.reader_page.setFocus()
+
+    def back_from_reader(self) -> None:
+        self.reader_page.save_position()
+        self.show_library()
+
+    def _show_add(self) -> None:
+        self.add_page.error_label.clear()
+        self.setCurrentWidget(self.add_page)
+        self.add_page.url_edit.setFocus()
+
+    def _redownload(self, key: str) -> None:
+        entry = self.store.find(key)
+        if entry is None:
+            return
+        self.add_page.url_edit.setText(entry["source_url"])
+        self.setCurrentWidget(self.add_page)
+        self.add_page.start_download(force=True)
+
+    def _on_app_state(self, state: Qt.ApplicationState) -> None:
+        if state != Qt.ApplicationActive:
+            self.reader_page.pause()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() != Qt.Key_Back:
+            super().keyPressEvent(event)
+        elif self.currentWidget() is self.reader_page:
+            self.back_from_reader()
+        elif self.currentWidget() is self.add_page:
+            self.add_page.go_back()
+        else:
+            # Unhandled Back reaches Android, which closes the activity.
+            event.ignore()
+
+
+def prepare_environment(
+    environ: MutableMapping[str, str], android: bool, cert_path: Callable[[], str]
+) -> None:
+    if android and "SSL_CERT_FILE" not in environ:
+        environ["SSL_CERT_FILE"] = cert_path()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="speedreader")
+    parser.add_argument("--smoke", action="store_true", help="открыть окно и сразу выйти")
+    parser.add_argument("--data-dir", type=Path, help="папка с библиотекой")
+    args = parser.parse_args(argv)
+
+    # OpenSSL in the APK finds no CA bundle on Android; certifi ships one.
+    prepare_environment(os.environ, is_android(), lambda: __import__("certifi").where())
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    app.setApplicationName("SpeedReader")
+    data_dir = args.data_dir or default_data_dir()
+    try:
+        store = LibraryStore(data_dir)
+    except LibraryError as e:
+        message = f"Ошибка хранилища: {e}"
+        print(message, file=sys.stderr)
+        QMessageBox.critical(None, "SpeedReader", message)
+        return 1
+
+    window = MobileWindow(store)
+    window.showMaximized()
+    if args.smoke:
+        QTimer.singleShot(0, app.quit)
+    return exit_code(app.exec())

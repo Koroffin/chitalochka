@@ -17,6 +17,7 @@ from speedreader.sources import SOURCES, SourceError, book_key, import_book_json
 
 _PAGE_RE = re.compile(r"page (\d+)/(\d+)")
 _CANCEL_TEXT = "Отмена"
+_MOBILE_MIN_HEIGHT = 48
 # A QThread destroyed while running aborts the process; keep timed-out workers alive here.
 _orphaned_workers: set = set()
 
@@ -61,7 +62,7 @@ class AddPage(QWidget):
     book_ready = Signal(str)
     back_requested = Signal()
 
-    def __init__(self, store: LibraryStore, parent: QWidget | None = None):
+    def __init__(self, store: LibraryStore, parent: QWidget | None = None, mobile: bool = False):
         super().__init__(parent)
         self.store = store
         self.sources: list = list(SOURCES)
@@ -89,6 +90,17 @@ class AddPage(QWidget):
         self.cancel_button.hide()
         self.back_button = QPushButton("Назад")
         self.back_button.clicked.connect(self.back_requested)
+        if mobile:
+            self.import_button.hide()
+            self.pdf_button.hide()
+            for button in (
+                self.download_button,
+                self.import_button,
+                self.pdf_button,
+                self.cancel_button,
+                self.back_button,
+            ):
+                button.setMinimumHeight(_MOBILE_MIN_HEIGHT)
 
         buttons = QHBoxLayout()
         for button in (self.download_button, self.import_button, self.pdf_button):
@@ -226,8 +238,12 @@ class AddPage(QWidget):
             return
         self._store_and_emit(book_key(book), book)
 
+    def go_back(self) -> None:
+        if not self.busy:
+            self.back_button.click()
+
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key_Escape and not self.busy:
-            self.back_button.click()
+            self.go_back()
         else:
             super().keyPressEvent(event)

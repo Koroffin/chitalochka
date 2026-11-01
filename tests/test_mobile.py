@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from PySide6.QtCore import QPoint, Qt, qInstallMessageHandler
+from PySide6.QtCore import QEvent, QPoint, Qt, qInstallMessageHandler
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -17,7 +18,10 @@ from speedreader.mobile import (
     LONG_PRESS_MS,
     MobileLibraryPage,
     MobileReaderPage,
+    MobileWindow,
     classify_gesture,
+    main,
+    prepare_environment,
 )
 from speedreader.reading import delay_for
 
@@ -254,3 +258,87 @@ class MobileReaderTest(StoreCase):
         self.page.load("empty", self.store.load_book("empty"))
         self.swipe(0, 0)
         self.assertFalse(self.page.playing)
+
+
+class MobileWindowTest(StoreCase):
+    def setUp(self):
+        super().setUp()
+        self.window = MobileWindow(self.store)
+        self.window.resize(400, 700)
+        self.window.show()
+        # With no event loop deleteLater never runs; a stale window would get the state signal.
+        self.addCleanup(QApplication.sendPostedEvents, None, QEvent.DeferredDelete)
+        self.addCleanup(self.window.deleteLater)
+
+    def test_back_from_reader_saves_and_returns(self):
+        self.window.open_book("k", False)
+        self.assertIs(self.window.currentWidget(), self.window.reader_page)
+        self.window.reader_page.model.set_position(1, 0)
+        QTest.keyClick(self.window.reader_page, Qt.Key_Back)
+        self.assertIs(self.window.currentWidget(), self.window.library_page)
+        self.assertEqual(self.store.find("k")["position"]["flat"], 3)
+        self.assertIn("50 %", self.window.library_page.item_text("k"))
+
+    def test_back_sent_to_window_leaves_reader(self):
+        self.window.open_book("k", False)
+        QTest.keyClick(self.window, Qt.Key_Back)
+        self.assertIs(self.window.currentWidget(), self.window.library_page)
+
+    def test_back_from_add_returns_when_idle(self):
+        self.window._show_add()
+        QTest.keyClick(self.window.add_page, Qt.Key_Back)
+        self.assertIs(self.window.currentWidget(), self.window.library_page)
+
+    def test_back_from_add_ignored_while_busy(self):
+        self.window._show_add()
+        self.window.add_page._worker = object()
+        self.addCleanup(setattr, self.window.add_page, "_worker", None)
+        QTest.keyClick(self.window.add_page, Qt.Key_Back)
+        self.assertIs(self.window.currentWidget(), self.window.add_page)
+
+    def test_back_on_library_is_ignored(self):
+        event = QKeyEvent(QEvent.KeyPress, Qt.Key_Back, Qt.NoModifier)
+        QApplication.sendEvent(self.window, event)
+        self.assertFalse(event.isAccepted())
+
+    def test_background_pauses_reading(self):
+        self.window.open_book("k", False)
+        self.window.reader_page.play()
+        QApplication.instance().applicationStateChanged.emit(Qt.ApplicationInactive)
+        self.assertFalse(self.window.reader_page.playing)
+
+    def test_back_after_book_removed_does_not_raise(self):
+        self.window.open_book("k", False)
+        self.store.remove("k")
+        QTest.keyClick(self.window.reader_page, Qt.Key_Back)
+        self.assertIs(self.window.currentWidget(), self.window.library_page)
+
+    def test_book_ready_opens_reader(self):
+        self.window.add_page.book_ready.emit("k2")
+        self.assertIs(self.window.currentWidget(), self.window.reader_page)
+        self.assertEqual(self.window.reader_page.key, "k2")
+
+    def test_open_book_storage_error_warns_and_shows_library(self):
+        with mock.patch.object(QMessageBox, "warning") as warning:
+            self.window.open_book("missing", False)
+        warning.assert_called_once()
+        self.assertIs(self.window.currentWidget(), self.window.library_page)
+
+
+class EnvironmentTest(unittest.TestCase):
+    def test_sets_cert_file_on_android_only(self):
+        env = {}
+        prepare_environment(env, android=True, cert_path=lambda: "/x/cacert.pem")
+        self.assertEqual(env, {"SSL_CERT_FILE": "/x/cacert.pem"})
+        env = {"SSL_CERT_FILE": "/keep"}
+        prepare_environment(env, android=True, cert_path=lambda: "/x/cacert.pem")
+        self.assertEqual(env["SSL_CERT_FILE"], "/keep")
+        env = {}
+        prepare_environment(env, android=False, cert_path=lambda: self.fail("imported certifi on desktop"))
+        self.assertEqual(env, {})
+
+
+class MainTest(unittest.TestCase):
+    def test_smoke_runs_and_exits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(main(["--smoke", "--data-dir", tmp]), 0)
