@@ -13,7 +13,12 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from speedreader.library import LibraryStore
-from speedreader.mobile import LONG_PRESS_MS, MobileLibraryPage, MobileReaderPage
+from speedreader.mobile import (
+    LONG_PRESS_MS,
+    MobileLibraryPage,
+    MobileReaderPage,
+    classify_gesture,
+)
 from speedreader.reading import delay_for
 
 _app = None
@@ -205,3 +210,47 @@ class MobileReaderTest(StoreCase):
         self.page.rewind()
         self.assertEqual(self.page.model.position, (1, 0))
         self.assertEqual(self.store.find("k")["position"]["flat"], 3)
+
+    def test_classify_gesture(self):
+        self.assertEqual(classify_gesture(5, 5, 400), "tap")
+        self.assertEqual(classify_gesture(100, 10, 400), "rewind")
+        self.assertEqual(classify_gesture(100, 60, 400), "none")
+        self.assertEqual(classify_gesture(-100, 0, 400), "none")
+        self.assertEqual(classify_gesture(0, 100, 400), "none")
+
+    def swipe(self, dx, dy):
+        start = QPoint(150, 300)
+        QTest.mousePress(self.page.ticker, Qt.LeftButton, pos=start)
+        QTest.mouseRelease(self.page.ticker, Qt.LeftButton, pos=start + QPoint(dx, dy))
+
+    def test_tap_toggles_play(self):
+        self.swipe(3, 2)
+        self.assertTrue(self.page.playing)
+        self.swipe(0, 0)
+        self.assertFalse(self.page.playing)
+
+    def test_swipe_right_rewinds_while_paused_and_saves(self):
+        self.page.model.set_position(1, 1)
+        self.page.refresh()
+        self.swipe(120, 5)
+        self.assertEqual(self.page.model.position, (1, 0))
+        self.assertFalse(self.page.playing)
+        self.assertEqual(self.store.find("k")["position"]["flat"], 3)
+
+    def test_swipe_right_while_playing_keeps_playing(self):
+        self.page.model.set_position(1, 1)
+        self.page.play()
+        self.swipe(120, 5)
+        self.assertTrue(self.page.playing)
+        self.assertEqual(self.page.model.position, (1, 0))
+
+    def test_swipe_up_does_nothing(self):
+        self.swipe(0, -150)
+        self.assertFalse(self.page.playing)
+        self.assertEqual(self.page.model.pos, 0)
+
+    def test_tap_on_empty_book_does_nothing(self):
+        self.store.add_book("empty", {**make_book(9, "Пустая"), "blocks": []})
+        self.page.load("empty", self.store.load_book("empty"))
+        self.swipe(0, 0)
+        self.assertFalse(self.page.playing)

@@ -31,6 +31,14 @@ DRAG_CANCEL_PX = 20
 PROGRESS_COLOR = QColor("#c9a227")
 
 
+def classify_gesture(dx: float, dy: float, width: float) -> str:
+    if abs(dx) < DRAG_CANCEL_PX and abs(dy) < DRAG_CANCEL_PX:
+        return "tap"
+    if dx >= width / 5 and abs(dx) > 2 * abs(dy):
+        return "rewind"
+    return "none"
+
+
 class MobileLibraryPage(QWidget):
     open_requested = Signal(str, bool)
     add_requested = Signal()
@@ -182,6 +190,8 @@ class MobileReaderPage(QWidget):
 
         self.strip = ProgressStrip()
         self.ticker = TickerView()
+        self.ticker.installEventFilter(self)
+        self._press_pos = QPoint()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.strip)
@@ -267,6 +277,21 @@ class MobileReaderPage(QWidget):
             self.store.set_position(self.key, *self.model.position, self.model.pos)
         except LibraryError as e:
             QMessageBox.warning(self, "SpeedReader", f"Ошибка хранилища: {e}")
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.ticker:
+            kind = event.type()
+            if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._press_pos = event.position().toPoint()
+            elif kind == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                moved = event.position().toPoint() - self._press_pos
+                # The ticker spans the page; its own width is a 640 px default until first shown.
+                gesture = classify_gesture(moved.x(), moved.y(), self.width())
+                if gesture == "tap":
+                    self.toggle()
+                elif gesture == "rewind":
+                    self.rewind()
+        return super().eventFilter(watched, event)
 
     def hideEvent(self, event) -> None:
         self.pause()
